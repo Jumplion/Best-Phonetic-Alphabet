@@ -13,57 +13,14 @@ from itertools import combinations
 
 # 🔧 CONFIGURATION
 FILTER_WORDS = False           # Set to 'True' to filter out words with fewer than MIN_PHONEME_LENGTH phonemes
-MAX_WORDS_PER_LETTER = 50000   # Max candidate words per starting letter
-TRIALS = 100000                 # Number of random trials
-MIN_PHONEME_LENGTH = 0        # Minimum number of phonemes required per word
+MAX_WORDS_PER_LETTER = 1000000   # Max candidate words per starting letter
+TRIALS = 10000                 # Number of random trials
+MIN_PHONEME_LENGTH = 1        # Minimum number of phonemes required per word
 VALIDATE = True              # Set to 'True' to run validation checks on the CMU dictionary
 USE_FEATURE_BASED_DISTANCE = False  # Set to 'True' to use feature-based distance instead of Levenshtein
 
 PENALIZE_LENGTH_VARIANCE = True
 LENGTH_VARIANCE_WEIGHT = 10  # Adjust this weight to control penalty severity
-
-arpabet_features = {
-    'P': {'voiced': 0, 'place': 'bilabial', 'manner': 'stop'},
-    'B': {'voiced': 1, 'place': 'bilabial', 'manner': 'stop'},
-    'T': {'voiced': 0, 'place': 'alveolar', 'manner': 'stop'},
-    'D': {'voiced': 1, 'place': 'alveolar', 'manner': 'stop'},
-    'K': {'voiced': 0, 'place': 'velar', 'manner': 'stop'},
-    'G': {'voiced': 1, 'place': 'velar', 'manner': 'stop'},
-    'CH': {'voiced': 0, 'place': 'postalveolar', 'manner': 'affricate'},
-    'JH': {'voiced': 1, 'place': 'postalveolar', 'manner': 'affricate'},
-    'F': {'voiced': 0, 'place': 'labiodental', 'manner': 'fricative'},
-    'V': {'voiced': 1, 'place': 'labiodental', 'manner': 'fricative'},
-    'TH': {'voiced': 0, 'place': 'dental', 'manner': 'fricative'},
-    'DH': {'voiced': 1, 'place': 'dental', 'manner': 'fricative'},
-    'S': {'voiced': 0, 'place': 'alveolar', 'manner': 'fricative'},
-    'Z': {'voiced': 1, 'place': 'alveolar', 'manner': 'fricative'},
-    'SH': {'voiced': 0, 'place': 'postalveolar', 'manner': 'fricative'},
-    'ZH': {'voiced': 1, 'place': 'postalveolar', 'manner': 'fricative'},
-    'HH': {'voiced': 0, 'place': 'glottal', 'manner': 'fricative'},
-    'M': {'voiced': 1, 'place': 'bilabial', 'manner': 'nasal'},
-    'N': {'voiced': 1, 'place': 'alveolar', 'manner': 'nasal'},
-    'NG': {'voiced': 1, 'place': 'velar', 'manner': 'nasal'},
-    'L': {'voiced': 1, 'place': 'alveolar', 'manner': 'liquid'},
-    'R': {'voiced': 1, 'place': 'alveolar', 'manner': 'liquid'},
-    'Y': {'voiced': 1, 'place': 'palatal', 'manner': 'glide'},
-    'W': {'voiced': 1, 'place': 'bilabial', 'manner': 'glide'},
-    # Vowels (simplified)
-    'AA': {'height': 'low', 'backness': 'back', 'rounded': 0},
-    'AE': {'height': 'low', 'backness': 'front', 'rounded': 0},
-    'AH': {'height': 'mid', 'backness': 'central', 'rounded': 0},
-    'AO': {'height': 'mid', 'backness': 'back', 'rounded': 1},
-    'AW': {'height': 'low', 'backness': 'back', 'rounded': 1},
-    'AY': {'height': 'low', 'backness': 'front', 'rounded': 0},
-    'EH': {'height': 'mid', 'backness': 'front', 'rounded': 0},
-    'ER': {'height': 'mid', 'backness': 'central', 'rounded': 0},
-    'EY': {'height': 'mid', 'backness': 'front', 'rounded': 0},
-    'IH': {'height': 'high', 'backness': 'front', 'rounded': 0},
-    'IY': {'height': 'high', 'backness': 'front', 'rounded': 0},
-    'OW': {'height': 'mid', 'backness': 'back', 'rounded': 1},
-    'OY': {'height': 'mid', 'backness': 'back', 'rounded': 1},
-    'UH': {'height': 'high', 'backness': 'back', 'rounded': 1},
-    'UW': {'height': 'high', 'backness': 'back', 'rounded': 1}
-}
 
 # -----------------------------
 # 📦 FUNCTION DEFINITIONS
@@ -76,15 +33,8 @@ def phoneme_distance_levenshtein(w1, w2):
     p2 = pron_dict[w2][0]
     return editdistance.eval(p1, p2)
 
-def feature_distance(p1, p2):
-    base1, base2 = p1.strip("012"), p2.strip("012")
-    f1, f2 = arpabet_features.get(base1), arpabet_features.get(base2)
-    if not f1 or not f2:
-        return 1  # default distance
-    return sum(abs(f1[k] - f2[k]) if isinstance(f1[k], int) else int(f1[k] != f2[k]) for k in f1)
-
 def compute_phoneme_distance(p1, p2):
-    distance_func = feature_distance if USE_FEATURE_BASED_DISTANCE else phoneme_distance_levenshtein
+    distance_func = phoneme_distance_levenshtein
     return sum(distance_func(a, b) for a, b in itertools.zip_longest(p1, p2, fillvalue=""))
 
 def compute_total_distance(word_set):
@@ -233,17 +183,63 @@ print(f"\n🔢 Total Phoneme Distance Score: {score}")
 # -----------------------------
 
 # Build graph
-G = nx.Graph()
-for word in selected_words:
-    G.add_node(word)
+# G = nx.Graph()
+# for word in selected_words:
+#     G.add_node(word)
+# 
+# for w1, w2 in combinations(selected_words, 2):
+#     dist = compute_phoneme_distance(w1, w2)
+#     G.add_edge(w1, w2, weight=dist)
+# 
+# # Draw graph
+# plt.figure(figsize=(15, 12))
+# pos = nx.spring_layout(G, weight='weight', seed=42)
+# nx.draw(G, pos, with_labels=True, node_color='lightblue', edge_color='gray', font_size=10)
+# plt.title("Phoneme Dissimilarity Graph for Selected Words")
+# plt.show()
 
-for w1, w2 in combinations(selected_words, 2):
-    dist = compute_phoneme_distance(w1, w2)
-    G.add_edge(w1, w2, weight=dist)
 
-# Draw graph
-plt.figure(figsize=(15, 12))
-pos = nx.spring_layout(G, weight='weight', seed=42)
-nx.draw(G, pos, with_labels=True, node_color='lightblue', edge_color='gray', font_size=10)
-plt.title("Phoneme Dissimilarity Graph for Selected Words")
-plt.show()
+
+# -----------------------------
+# 📜 PHONEME LEGEND
+#           Phoneme Example Translation TYPE
+#           ------- ------- ----------- -----
+#   ɑ       AA	    odd     AA D        VOWEL
+#   æ       AE	    at	    AE T        VOWEL
+#   ʌ       AH	    hut	    HH AH T     VOWEL
+#   ɔ       AO	    ought	AO T        VOWEL
+#   aʊ      AW	    cow	    K AW        CONSONANT
+#   ə       AY	    hide	HH AY D     VOWEL
+#   ɚ       B 	    be	    B IY        CONSONANT
+#           CH	    cheese	CH IY Z     CONSONANT
+#           D 	    dee	    D IY        CONSONANT
+#           DH	    thee	DH IY       CONSONANT
+#           EH	    Ed	    EH D
+#           ER	    hurt	HH ER T
+#           EY	    ate	    EY T
+#           F 	    fee	    F IY
+#           G 	    green	G R IY N
+#           HH	    he	    HH IY
+#           IH	    it	    H T
+#           IY	    eat	    IY T
+#           JH	    gee	    JH IY
+#           K 	    key	    K IY
+#           L 	    lee	    L IY
+#           M 	    me	    M IY
+#           N 	    knee	N IY
+#           NG	    ping	P IH NG
+#           OW	    oat	    OW T
+#           OY	    toy	    T OY
+#           P 	    pee	    P IY
+#           R 	    read	R IY D
+#           S 	    sea	    S IY
+#           SH	    she	    SH IY
+#           T 	    tea	    T IY
+#           TH	    theta	TH EY T AH
+#           UH	    hood	HH UH D
+#           UW	    two	    T UW
+#           V 	    vee	    V IY
+#           W 	    we	    W IY
+#           Y 	    yield	Y IY L D
+#           Z 	    zee	    Z IY
+#           ZH	    seizure	S IY ZH ER
