@@ -3,6 +3,7 @@ import editdistance
 import random
 import os
 import csv
+import math
 import logging
 import itertools
 import numpy as np
@@ -21,6 +22,75 @@ USE_FEATURE_BASED_DISTANCE = False  # Set to 'True' to use feature-based distanc
 
 PENALIZE_LENGTH_VARIANCE = True
 LENGTH_VARIANCE_WEIGHT = 10  # Adjust this weight to control penalty severity
+
+# Phoneme Coordinates
+PHONEME_COORDINATES = {
+    
+    # VOWELS    
+    # Vowel |  Backness (Front 0 / Central 1 / Back 2)     Height (Low [Open] 0 / Mid 1 / High [Close] 2)      Roundness (Rounded 0 / Unrounded 1)
+    "AA":  (0,  2,   0, 0),     # ɑ
+    "AE":  (0,  0,   0, 0),     # æ
+    "AH":  (0,  1,   1, 0),     # ʌ or ə
+    "AO":  (0,  2,   1, 1),     # ɔ
+    "AW":  (0,  1.5, 1, 1),     # aʊ
+    "AX":  (0,  1,   1, 0),     # ə (unstressed)
+    "AY":  (0,  1,   1, 0),     # aɪ
+    "EY":  (0,  0,   1.3, 0),   # e
+    "EH":  (0,  0,   1, 0),     # ɛ
+    "ER":  (0,  1,   1, 0),     # ɚ
+    "IY":  (0,  0,   2, 0),     # i
+    "IH":  (0,  0,   1.7, 0),   # ɪ
+    "OW":  (0,  2,   1.3, 1),   # o
+    "OY":  (0,  1,   1, 0.5),   # ɔɪ
+    "UW":  (0,  2,   2, 1),     # u
+    "UH":  (0,  2,   1.7, 1),   # ʊ
+    
+    
+    # CONSONANTS    
+    # 
+    # 
+    # Consonant | Place of Articulation | Manner of Articulation | Voiced/Unvoiced
+    # 0 = Bilabial, 1 = Labiodental, 2 = Dental, 3 = Alveolar, 4 = Velar, 5 = Glottal
+    # 0 = Stop, 0.5 = Affricate, 1 = Fricative, 2 = Nasal, 3 = Lateral Liquid, 3.5 = Rhotic Liquid, 4 = Glide
+    # 0 = Voiceless, 1 = Voiced
+    
+    # Stops
+    "P":  (1, 0, 0, 0),  # voiceless bilabial stop
+    "B":  (1, 0, 0, 1),  # voiced bilabial stop
+    "T":  (1, 2, 0, 0),  # voiceless alveolar stop
+    "D":  (1, 2, 0, 1),  # voiced alveolar stop
+    "K":  (1, 4, 0, 0),  # voiceless velar stop
+    "G":  (1, 4, 0, 1),  # voiced velar stop
+
+    # Affricates
+    "CH": (1, 3, 0.5, 0),  # voiceless postalveolar affricate
+    "JH": (1, 3, 0.5, 1),  # voiced postalveolar affricate
+
+    # Fricatives
+    "F":  (1, 1, 1, 0),  # voiceless labiodental fricative
+    "V":  (1, 1, 1, 1),  # voiced labiodental fricative
+    "TH": (1, 2, 1, 0),  # voiceless dental fricative
+    "DH": (1, 2, 1, 1),  # voiced dental fricative
+    "S":  (1, 2, 1, 0),  # voiceless alveolar fricative
+    "Z":  (1, 2, 1, 1),  # voiced alveolar fricative
+    "SH": (1, 3, 1, 0),  # voiceless postalveolar fricative
+    "ZH": (1, 3, 1, 1),  # voiced postalveolar fricative
+    "HH": (1, 5, 1, 0),  # voiceless glottal fricative
+
+    # Nasals
+    "M":  (1, 0, 2, 1),  # bilabial nasal
+    "N":  (1, 2, 2, 1),  # alveolar nasal
+    "NG": (1, 4, 2, 1),  # velar nasal
+
+    # Liquids
+    "L":  (1, 2, 3, 1),  # alveolar lateral liquid
+    "R":  (1, 2, 3.5, 1),# alveolar rhotic liquid
+
+    # Glides (approximants)
+    "Y":  (1, 3, 4, 1),  # palatal glide (IPA: /j/)
+    "W":  (1, 0, 4, 1)   # bilabial glide
+}   
+
 
 # -----------------------------
 # 📦 FUNCTION DEFINITIONS
@@ -90,6 +160,25 @@ def find_best_set_randomized(words_by_letter, trials=1000):
                 print(f"Progress: {((i + 1) / trials) * 100:.0f}%")
 
     return best_set, best_score
+
+
+
+def write_phoneme_distance_matrix(filename="phoneme_distances.csv"):
+    """Compare every phoneme coordinate with every other and write distances to a CSV."""
+    phonemes = list(PHONEME_COORDINATES.keys())
+    with open(filename, "w", newline="") as csvfile:
+        writer = csv.writer(csvfile)
+        # Write header
+        writer.writerow(["Phoneme1", "Phoneme2", "EuclideanDistance"])
+        for i, p1 in enumerate(phonemes):
+            coord1 = PHONEME_COORDINATES[p1]
+            for j, p2 in enumerate(phonemes):
+                if i < j:  # Avoid duplicate pairs and self-comparison
+                    coord2 = PHONEME_COORDINATES[p2]
+                    # Compute Euclidean distance
+                    dist = math.sqrt(sum((a - b) ** 2 for a, b in zip(coord1, coord2)))
+                    writer.writerow([p1, p2, dist])
+
 
 # -----------------------------
 # 📥 DATA LOADING & PREP
@@ -164,15 +253,18 @@ if VALIDATE:
 # 🚀 MAIN LOGIC
 # -----------------------------
 
+
+# write_phoneme_distance_matrix("phoneme_distances.csv")
+
 # Find optimal diverse word set (random trial or exhaustive)
-print("🔍 Searching for the most phonetically diverse set of words...")
-selected_words, score = find_best_set_randomized(words_by_letter, trials=TRIALS)
+#print("🔍 Searching for the most phonetically diverse set of words...")
+#selected_words, score = find_best_set_randomized(words_by_letter, trials=TRIALS)
 
 # Print result
-print("\n📋 Selected Words (Most Phonetically Diverse A–Z):")
-for word in selected_words:
-    print(f"{word.capitalize():<12}  ->  {' '.join(pron_dict[word][0])}")
-print(f"\n🔢 Total Phoneme Distance Score: {score}")
+#print("\n📋 Selected Words (Most Phonetically Diverse A–Z):")
+#for word in selected_words:
+#    print(f"{word.capitalize():<12}  ->  {' '.join(pron_dict[word][0])}")
+#print(f"\n🔢 Total Phoneme Distance Score: {score}")
 
 
 
@@ -197,49 +289,3 @@ print(f"\n🔢 Total Phoneme Distance Score: {score}")
 # nx.draw(G, pos, with_labels=True, node_color='lightblue', edge_color='gray', font_size=10)
 # plt.title("Phoneme Dissimilarity Graph for Selected Words")
 # plt.show()
-
-
-
-# -----------------------------
-# 📜 PHONEME LEGEND
-#           Phoneme Example Translation TYPE
-#           ------- ------- ----------- -----
-#   ɑ       AA	    odd     AA D        VOWEL
-#   æ       AE	    at	    AE T        VOWEL
-#   ʌ       AH	    hut	    HH AH T     VOWEL
-#   ɔ       AO	    ought	AO T        VOWEL
-#   aʊ      AW	    cow	    K AW        CONSONANT
-#   ə       AY	    hide	HH AY D     VOWEL
-#   ɚ       B 	    be	    B IY        CONSONANT
-#           CH	    cheese	CH IY Z     CONSONANT
-#           D 	    dee	    D IY        CONSONANT
-#           DH	    thee	DH IY       CONSONANT
-#           EH	    Ed	    EH D
-#           ER	    hurt	HH ER T
-#           EY	    ate	    EY T
-#           F 	    fee	    F IY
-#           G 	    green	G R IY N
-#           HH	    he	    HH IY
-#           IH	    it	    H T
-#           IY	    eat	    IY T
-#           JH	    gee	    JH IY
-#           K 	    key	    K IY
-#           L 	    lee	    L IY
-#           M 	    me	    M IY
-#           N 	    knee	N IY
-#           NG	    ping	P IH NG
-#           OW	    oat	    OW T
-#           OY	    toy	    T OY
-#           P 	    pee	    P IY
-#           R 	    read	R IY D
-#           S 	    sea	    S IY
-#           SH	    she	    SH IY
-#           T 	    tea	    T IY
-#           TH	    theta	TH EY T AH
-#           UH	    hood	HH UH D
-#           UW	    two	    T UW
-#           V 	    vee	    V IY
-#           W 	    we	    W IY
-#           Y 	    yield	Y IY L D
-#           Z 	    zee	    Z IY
-#           ZH	    seizure	S IY ZH ER
