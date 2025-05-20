@@ -151,6 +151,13 @@ def find_best_set_randomized(trials=1000):
     """Find a diverse set via random sampling."""
     best_score = -1
     best_set = []
+    
+    # Group words by first letter
+    words_by_letter = defaultdict(list)
+
+    for word in pron_dict.keys():
+        words_by_letter[word[0].upper()].append(word)
+    
     letters = sorted(words_by_letter.keys())
 
     with open("random_search_log.csv", "a", newline="") as f:
@@ -326,13 +333,6 @@ nltk.download('cmudict')
 nltk.download("wordnet")
 
 pron_dict = get_cleaned_cmu_dict()
-
-# Group words by first letter
-words_by_letter = defaultdict(list)
-for word in pron_dict:
-    if word[0].isalpha() and word.isalpha():
-        first_letter = word[0].upper()
-        words_by_letter[first_letter].append(word)
 
 # -----------------------------
 # 🚀 MAIN LOGIC
