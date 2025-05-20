@@ -4,8 +4,16 @@
         "arpabet",
         "backness",
         "cmudict",
+        "csvfile",
         "fillvalue",
+        "Lemmatization",
+        "lemmatize",
+        "Lemmatized",
+        "lemmatizer",
+        "Lemmatizing",
         "postalveolar",
-        "rhotic"
+        "rhotic",
+        "synsets",
+        "wordnet"
     ]
 }
