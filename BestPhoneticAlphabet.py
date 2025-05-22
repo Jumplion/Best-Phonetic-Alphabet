@@ -129,6 +129,12 @@ def write_word_averages(pron_dict):
         avg_writer = csv.writer(avg_csvfile)
         avg_writer.writerow(["Word", "Phonemes", "Magnitude", "Average Levenshtein Distance", "Average Phoneme Distance (Basic)", "Average Shared Phoneme Sequence Count", "Calculation Time"])
 
+        all_magnitudes = 0
+        all_levenshtein = 0
+        all_phoneme = 0
+        all_shared = 0
+        all_time = 0
+        
         # For each word, compare it to every other word (excluding words with the same first letter),
         # compute the average Levenshtein distance, and write results to a CSV file.
         total_words = len(list(pron_dict.keys()))
@@ -160,14 +166,29 @@ def write_word_averages(pron_dict):
                 count += 1
             
             magnitude = sum(PHONEME_DISTANCE_DICT.get((p, ""), 0) for p in word1_pron) / len(word1_pron)
-            avg_levenshtein = total_dist_levenshtein / count
-            avg_phoneme = total_dist_phoneme / count
+            avg_levenshtein = total_dist_levenshtein / count            
+            avg_phoneme = total_dist_phoneme / count          
             avg_shared = total_shared / count
+            compute_time = time.time() - start_time
+
+            all_magnitudes += magnitude
+            all_levenshtein += avg_levenshtein
+            all_phoneme += avg_phoneme
+            all_shared += avg_shared
+            all_time += compute_time
             
             # Write the results to the CSV file
             word1_pron = " ".join(word1_pron)
-            avg_writer.writerow([word1, word1_pron, magnitude, avg_levenshtein, avg_phoneme, avg_shared, time.time() - start_time])
-            
+            avg_writer.writerow([word1, word1_pron, magnitude, avg_levenshtein, avg_phoneme, avg_shared, compute_time])         
+        
+        # Write the averages to the CSV file
+        all_magnitudes /= total_words
+        all_levenshtein /= total_words
+        all_phoneme /= total_words
+        all_shared /= total_words
+        all_time /= total_words
+        avg_writer.writerow(["Total Average", "", all_magnitudes, all_levenshtein, all_phoneme, all_shared, all_time])
+        
 # Calculate the phoneme distance between two phoneme sequences.
 def phoneme_distance(p1_list, p2_list):
     distance = 0
@@ -454,8 +475,6 @@ for count, num_words in sorted(letter_count.items()):
 # -----------------------------
 # 🚀 MAIN LOGIC
 # -----------------------------
-
-
 
 write_word_averages(pron_dict)
 
