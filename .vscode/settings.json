@@ -12,7 +12,9 @@
         "lemmatizer",
         "Lemmatizing",
         "postalveolar",
+        "prons",
         "rhotic",
+        "subarrays",
         "synsets",
         "wordnet"
     ]

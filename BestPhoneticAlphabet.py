@@ -1,5 +1,6 @@
 import nltk
-from nltk.corpus import cmudict
+from nltk.corpus import cmudict, wordnet
+from nltk.stem import WordNetLemmatizer
 import editdistance
 import random
 import os
@@ -7,26 +8,43 @@ import csv
 import math
 import logging
 import itertools
+from itertools import combinations
 import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
 from collections import Counter, defaultdict
-from itertools import combinations
-import nltk
-from nltk.corpus import cmudict, wordnet
-from nltk.stem import WordNetLemmatizer
-from collections import defaultdict
+import time
 
 # 🔧 CONFIGURATION
-FILTER_WORDS = False             # Set to 'True' to filter out words with fewer than MIN_PHONEME_LENGTH phonemes
-TRIALS = 10000                  # Number of random trials
+
+# -----------------------------
+# Filter Options
+# -----------------------------
+FILTER_NON_ALPHABETIC = True    # Set to 'True' to filter out words with non-alphabetic characters
+FILTER_SINGLE_LETTER = True     # Set to 'True' to filter out single letter words
+FILTER_BY_MIN_PHONEME = True     # Set to 'True' to filter out words with fewer than MIN_PHONEME_LENGTH phonemes
+FILTER_BY_MAX_PHONEME = True     # Set to 'True' to filter out words with more than MAX_PHONEME_LENGTH phonemes
+FILTER_BY_MIN_LENGTH = True         # Set to 'True' to filter out words with fewer than MIN_WORD_LENGTH letters
+FILTER_BY_MAX_LENGTH = True         # Set to 'True' to filter out words with more than MAX_WORD_LENGTH letters
+FILTER_PH = True            # Set to 'True' to filter out words starting with "ph"
+FILTER_SH = True            # Set to 'True' to filter out words starting with "sh"
+FILTER_TH = True            # Set to 'True' to filter out words starting with "th"
+LEMMATIZE_DICT = True          # Set to 'True' to lemmatize words
+CHECK_AGAINST_WORDNET = True   # Set to 'True' to check if words exist in WordNet
+
+# -----------------------------
+# Phoneme and Word Length Options
+# -----------------------------
 MIN_PHONEME_LENGTH = 2          # Minimum number of phonemes required per word
-MIN_WORD_LENGTH = 3            # Minimum number of letters required per word
-MAX_WORD_LENGTH = 20           # Maximum number of letters allowed per word
-MAX_PHONEME_LENGTH = 100          # Maximum number of phonemes allowed per word
+MAX_PHONEME_LENGTH = 10         # Maximum number of phonemes allowed per word
+MIN_WORD_LENGTH = 3             # Minimum number of letters required per word
+MAX_WORD_LENGTH = 10            # Maximum number of letters allowed per word
 MAX_SYLLABLES = 3               # Maximum number of syllables allowed per word
-LEMMATIZE_DICT = False           # Set to 'True' to lemmatize words
-CHECK_AGAINST_WORDNET = False    # Set to 'True' to check if words exist in WordNet
+
+# -----------------------------
+# Randomization Options
+# -----------------------------
+TRIALS = 10000                  # Number of random trials
 PENALIZE_LENGTH_VARIANCE = True # Set to 'True' to penalize length variance
 LENGTH_VARIANCE_WEIGHT = 10     # Adjust this weight to control penalty severity
 SELECTED_FUNCTION = "phoneme_distance"  # Choose the distance function to use
@@ -106,52 +124,82 @@ WORDS_BY_LETTER = defaultdict(list)
 def levenshtein_distance(w1, w2):
     return editdistance.eval(w1, w2)
 
-def write_average_levenshtein_distances(pron_dict):
-    total_words = len(list(pron_dict.keys()))
-
-    with open("average_levenshtein_distances.csv", "w", newline="") as avg_csvfile:
+def write_word_averages(pron_dict):
+    with open("word_score_averages.csv", "w", newline="") as avg_csvfile:
         avg_writer = csv.writer(avg_csvfile)
-        avg_writer.writerow(["Word 1", "Average Levenshtein Distance"])
+        avg_writer.writerow(["Word", "Phonemes", "Magnitude", "Average Levenshtein Distance", "Average Phoneme Distance (Basic)", "Average Shared Phoneme Sequence Count", "Calculation Time"])
 
-        with open("levenshtein_distances.csv", "w", newline="") as lev_csvfile:    
-            lev_writer = csv.writer(lev_csvfile)   
-            lev_writer.writerow([""] + list(pron_dict.keys()))
+        # For each word, compare it to every other word (excluding words with the same first letter),
+        # compute the average Levenshtein distance, and write results to a CSV file.
+        total_words = len(list(pron_dict.keys()))
+        for i, word1 in enumerate(list(pron_dict.keys())):
+            print(f"Processing word {i + 1}/{total_words}: {word1}")
+            
+            start_time = time.time()
+            
+            word1_pron = pron_dict[word1][0]
+            
+            total_dist_levenshtein = 0.0
+            total_dist_phoneme = 0.0
+            total_shared = 0.0
+            
+            count = 0
+            
+            # Go through check_dict and calculate the distance
+            # between word1 and every other word in the dictionary
+            for j, word2 in enumerate(list(pron_dict.keys())):
+                if i == j or word2[0].upper() == word1[0].upper():
+                    continue
+                
+                word2_pron = pron_dict[word2][0]
 
-            # For each word, compare it to every other word (excluding words with the same first letter),
-            # compute the average Levenshtein distance, and write results to a CSV file.
-            for i, word1 in enumerate(list(pron_dict.keys())):
-                print(f"Processing word {i + 1}/{total_words}: {word1}")
-                total_dist = 0.0
-                count = 0       
-                
-                # Create a copy of the dictionary, excluding the first letter of word1
-                # Use this copy to check against the rest of the words
-                #check_dict = WORDS_BY_LETTER.copy()
-                #del(check_dict[word1[0].upper()])
-                
-                row = [word1]
-                
-                # Go through check_dict and calculate the distance
-                # between word1 and every other word in the dictionary
-                for letter, words in WORDS_BY_LETTER.items():
-                    for j, word2 in enumerate(words):
-                        dist = levenshtein_distance(word1, word2)
-                        row.append(dist)
-                        total_dist += dist
-                        count += 1
-                    
-                lev_writer.writerow(row)      
-                avg_writer.writerow([word1, total_dist / count if count else 0.0])
-                            
+                total_dist_levenshtein += levenshtein_distance(word1, word2)
+                total_dist_phoneme += compute_phoneme_distance(word1_pron, word2_pron)   
+                total_shared += shared_phoneme_sequences(word1_pron, word2_pron)
+
+                count += 1
+            
+            magnitude = sum(PHONEME_DISTANCE_DICT.get((p, ""), 0) for p in word1_pron) / len(word1_pron)
+            avg_levenshtein = total_dist_levenshtein / count
+            avg_phoneme = total_dist_phoneme / count
+            avg_shared = total_shared / count
+            
+            # Write the results to the CSV file
+            word1_pron = " ".join(word1_pron)
+            avg_writer.writerow([word1, word1_pron, magnitude, avg_levenshtein, avg_phoneme, avg_shared, time.time() - start_time])
+            
 # Calculate the phoneme distance between two phoneme sequences.
 def phoneme_distance(p1_list, p2_list):
     distance = 0
     for i in range(min(len(p1_list), len(p2_list))):
         distance += PHONEME_DISTANCE_DICT.get((p1_list[i], p2_list[i]), 0)
 
+    # Handle the case where one list is longer than the other
+    remaining_phonemes = p1_list[len(p2_list):] if len(p1_list) > len(p2_list) else p2_list[len(p1_list):]
+    # If the remaining phonemes are empty, return the distance
+    if not remaining_phonemes:
+        return distance
+    # If the remaining phonemes are not empty, add the distance of the remaining phonemes
     # Adding the distance/magnitude of remaining phonemes are a flawed system, need to figure out a better way to handle this   
-    #distance += sum(PHONEME_DISTANCE_DICT.get((remaining_phonemes[i], ""), 0) for i in range(len(remaining_phonemes)))   
+    distance += sum(PHONEME_DISTANCE_DICT.get((remaining_phonemes[i], ""), 0) for i in range(len(remaining_phonemes)))   
     return distance
+
+def shared_phoneme_sequences(p1, p2):
+    # Measure the time it takes to complete the function   
+    set1, set2 = set(), set()
+    n1, n2 = len(p1), len(p2)
+    N = min(n1, n2) + 1
+
+    for i in range(n1):
+        for j in range(i + 1, min(n1, i + N)):
+            set1.add(tuple(p1[i:j]))
+
+    for i in range(n2):
+        for j in range(i + 1, min(n2, i + N)):
+            set2.add(tuple(p2[i:j]))
+
+    # Count the intersection
+    return len(set1 & set2)
 
 DISTANCE_FUNC = {
     "levenshtein": levenshtein_distance,
@@ -221,144 +269,156 @@ def find_best_set_randomized(trials=1000):
             if (i + 1) % (trials // 25) == 0 or (i + 1) == trials:
                 print(f"Progress: {((i + 1) / trials) * 100:.0f}%")
 
-    return best_set, best_score
-
-# Compare every phoneme coordinate with every other
-def create_phoneme_distance_matrix():
-    phonemes = list(PHONEME_COORDINATES.keys())
-
-    for i, p1 in enumerate(phonemes):
-        coord1 = PHONEME_COORDINATES[p1]
-        # Get magnitude of p1 coordinates and write to file
-        magnitude = math.sqrt(sum(a ** 2 for a in coord1))
-        
-        PHONEME_DISTANCE_DICT[(p1, "")] = magnitude
-        PHONEME_DISTANCE_DICT[("", p1)] = magnitude
-        PHONEME_DISTANCE_DICT[(p1, p1)] = 0.0
-        
-        for j, p2 in enumerate(phonemes):
-            if i < j:  # Avoid duplicate pairs
-                coord2 = PHONEME_COORDINATES[p2]
-                # Compute Euclidean distance
-                dist = math.sqrt(sum((a - b) ** 2 for a, b in zip(coord1, coord2)))
-                PHONEME_DISTANCE_DICT[(p1, p2)] = dist
-                PHONEME_DISTANCE_DICT[(p2, p1)] = dist  # Symmetric   
-
-# For each word, compare it to every other word (excluding words with the same first letter),
-# compute the average phoneme distance, and write results to a CSV file.
-def write_average_word_distances(pron_dict, filename="average_word_distances.csv"):
-    words = list(pron_dict.keys())
-    total_words = len(words)
-    with open(filename, "w", newline="") as csvfile:
-        writer = csv.writer(csvfile)
-        writer.writerow(["Word", "Magnitude", "AverageDistance"])
-        for i, word1 in enumerate(words):     
-            pron1 = pron_dict[word1][0] if pron_dict[word1] else []
-            if not pron1:
-                continue
-            
-            print(f"Processing word {i + 1}/{total_words}: {word1}")
-            total_dist = 0.0
-            count = 0       
-            for j, word2 in enumerate(words):
-                if i == j or word2[0].upper() == word1[0].upper():
-                    continue
-                pron2 = pron_dict[word2][0] if pron_dict[word2] else []
-                if not pron2:
-                    continue
-                dist = compute_phoneme_distance(pron1, pron2)
-                total_dist += dist
-                count += 1
-                
-            # Calculate the current word's phoneme magnitude I.E. The average of all its individual phoneme distances
-            magnitude = sum(PHONEME_DISTANCE_DICT.get((p, ""), 0) for p in pron1) / len(pron1)
-            avg_dist = total_dist / count if count else 0.0
-            writer.writerow([word1, magnitude, avg_dist])
+    return best_set, best_score# Symmetric   
 
 def get_cleaned_cmu_dict():
-    
-    def lemmatize_word(word):
-        lemmatizer = WordNetLemmatizer()
-        noun = lemmatizer.lemmatize(word.lower(), pos='n')
-        verb = lemmatizer.lemmatize(noun, pos='v')
-        return verb
+    print("\nCMU Dictionary Loaded | Total Words:", len(cmudict.dict()))
 
-    pron_dict = cmudict.dict()
-    
-    print("\nCMU Dictionary Loaded | Total Words:", len(pron_dict))
+    filters_list = [
+        FILTER_SINGLE_LETTER,
+        FILTER_BY_MIN_PHONEME,
+        FILTER_BY_MAX_PHONEME,
+        FILTER_BY_MIN_LENGTH,
+        FILTER_BY_MAX_LENGTH,
+        FILTER_PH,
+        FILTER_SH,
+        FILTER_TH,
+        CHECK_AGAINST_WORDNET,
+        LEMMATIZE_DICT
+    ]
+
+    # Check if any filters are active
+    if not any(filters_list):
+        print("\nNo Filters Active | All Words Kept")
+    else:
+        print("\n - [Filters Active] - \n")
+        # Print the filters that are active
+        if FILTER_NON_ALPHABETIC:
+            print(" - [Words With Non-Alphabetic Characters]")
+        if FILTER_SINGLE_LETTER:
+            print(" - [Single Letter Words]")
+        if FILTER_BY_MIN_PHONEME:
+            print(" - [Min Phoneme Length ({MIN_PHONEME_LENGTH})]", MIN_PHONEME_LENGTH)
+        if FILTER_BY_MAX_PHONEME:
+            print(" - [Max Phoneme Length ({MAX_PHONEME_LENGTH})]", MAX_PHONEME_LENGTH)
+        if FILTER_BY_MIN_LENGTH:
+            print(" - [Min Word Length ({MIN_WORD_LENGTH})]", MIN_WORD_LENGTH)
+        if FILTER_BY_MAX_LENGTH:
+            print(" - [Max Word Length ({MAX_WORD_LENGTH})]", MAX_WORD_LENGTH)
+        if FILTER_PH:
+            print(" - [Ph- Words]")
+        if FILTER_SH:
+            print(" - [Sh- Words]")
+        if FILTER_TH:
+            print(" - [Th- Words]")
+        if CHECK_AGAINST_WORDNET:
+            print(" - [WordNet Check]")
+        if LEMMATIZE_DICT:
+            print(" - [Lemmatization]")
+
     cleaned_dict = cmudict.dict()
+    # Normalize the dictionary
+    for word in list(cleaned_dict.keys()):
+        # Remove words with non-alphabetic characters
+        if FILTER_NON_ALPHABETIC and not word.isalpha():
+            del cleaned_dict[word]
+        # Remove words with fewer than MIN_PHONEME_LENGTH
+        elif FILTER_BY_MIN_PHONEME and len(cleaned_dict[word][0]) < MIN_PHONEME_LENGTH:
+            del cleaned_dict[word]
+        # Remove words with more than MAX_PHONEME_LENGTH
+        elif FILTER_BY_MAX_PHONEME and len(cleaned_dict[word][0]) > MAX_PHONEME_LENGTH:
+            del cleaned_dict[word]
+        # Remove words that start with "ph", "sh", or "th"
+        elif (FILTER_PH and word.startswith("ph")) or (FILTER_SH and word.startswith("sh")) or (FILTER_TH and word.startswith("th")):
+            del cleaned_dict[word]
+        # Remove words that less than 2 letters long
+        elif FILTER_BY_MIN_LENGTH and len(word) < MIN_WORD_LENGTH:
+            del cleaned_dict[word]
+        # Remove words that are longer than 15 letters
+        elif FILTER_BY_MAX_LENGTH and len(word) > MAX_WORD_LENGTH:
+            del cleaned_dict[word]
+        # Remove words that are made up of a single letter repeated
+        elif FILTER_SINGLE_LETTER and len(set(word)) == 1:
+            del cleaned_dict[word]
+        # Remove words that are not in WordNet (if CHECK_AGAINST_WORDNET is True) (Results in about 25k words left, 80k without checking)
+        elif CHECK_AGAINST_WORDNET and not wordnet.synsets(word):
+            del cleaned_dict[word]
+    
+    print("\nCulling Complete | Total Words:", len(cleaned_dict))
 
     if LEMMATIZE_DICT:
-        print("\nLemmatizing Words and Filtering by Syllable Count...")
+        print("\nLemmatizing Words...")
+        
+        # Create a lemmatizer
+        lemmatizer = WordNetLemmatizer()
         lemma_map = defaultdict(list)
-        # Lemmatize the words, group by lemma, and filter by syllable count
-        for word in pron_dict:
-            if not word.isalpha():
-                continue
-            lemma = lemmatize_word(word)
-            for pron in pron_dict[word]:
-                lemma_map[lemma].append((word, pron))
-                break  # only need one valid pronunciation under limit
+        
+        # Lemmatize the words, group by lemma
+        for word, prons in cleaned_dict.items():
+            noun = lemmatizer.lemmatize(word.lower(), pos='n')
+            lemma = lemmatizer.lemmatize(noun, pos='v')
+            lemma_map[lemma].append((word, prons[0]))
 
+        temp_dict = {}
         # Choose representative word for each lemma (shortest spelling)
         for lemma, variants in lemma_map.items():
             representative = min(variants, key=lambda x: len(x[0]))
-            cleaned_dict[representative[0]] = [representative[1]]  # keep as list for CMU compatibility     
-        print("\nLemmatization and Syllable Count Filtering Complete | Total Words:", len(cleaned_dict))
+            temp_dict[representative[0]] = [representative[1]]  # keep as list for CMU compatibility 
+        
+        cleaned_dict = temp_dict
+        print("\nLemmatization Complete | Total Words:", len(cleaned_dict))
 
-    if FILTER_WORDS:
-        print("\nCulling Words")
-        print("\n - [No stress markers or numbers | No single letter words | No repeated letters]")
-        print("\n - [No words starting with 'ph','sh','th' | Must be in both CMU and WordNet]")
-        print("\n - [No words with fewer than MIN_PHONEME_LENGTH or more than MAX_PHONEME_LENGTH phonemes]")
-        # Normalize the dictionary
-        for word in list(cleaned_dict.keys()):
-            # Remove words with non-alphabetic characters
-            if not word.isalpha():
-                del cleaned_dict[word]
-            # Remove words with fewer than MIN_PHONEME_LENGTH
-            elif len(cleaned_dict[word][0]) < MIN_PHONEME_LENGTH:
-                del cleaned_dict[word]
-            # Remove words with more than MAX_PHONEME_LENGTH
-            elif len(cleaned_dict[word][0]) > MAX_PHONEME_LENGTH:
-                del cleaned_dict[word]
-            # Remove words that start with "ph", "sh", or "th"
-            elif word.startswith("ph") or word.startswith("sh") or word.startswith("th"):
-                del cleaned_dict[word]
-            # Remove words that less than 2 letters long
-            elif len(word) < MIN_WORD_LENGTH:
-                del cleaned_dict[word]
-            # Remove words that are longer than 15 letters
-            elif len(word) > MAX_WORD_LENGTH:
-                del cleaned_dict[word]
-            # Remove words that are made up of a single letter repeated
-            elif len(set(word)) == 1:
-                del cleaned_dict[word]
-            # Remove words that are not in WordNet (if CHECK_AGAINST_WORDNET is True) (Results in about 25k words left, 80k without checking)
-            elif not wordnet.synsets(word) and CHECK_AGAINST_WORDNET:
-                del cleaned_dict[word]
-                
-        print("\nCulling Complete | Total Words:", len(cleaned_dict))
 
-    #print("\nCleaning Phoneme Representation")
-    #print("\n - [Removing stress markers and numbers for simplicity]")
-    ## Normalize phoneme representation
-    #for word, pronunciations in cleaned_dict.items():
-    #    for i, pronunciation in enumerate(pronunciations):
-    #        # Remove stress markers
-    #        pronunciation = [p[:-1] if p[-1].isdigit() else p for p in pronunciation]
-    #        # Convert to uppercase
-    #        pronunciation = [p.upper() for p in pronunciation]
-    #        cleaned_dict[word][i] = pronunciation
-    #
-    #print("\nPhoneme Normalization Complete | Total Words:", len(cleaned_dict))
+    # user input
+    input("Press Enter to continue...")
+
+    print("\nCleaning Phoneme Representation")
+    print("\n - [Removing stress markers and numbers for simplicity]")
+    # Normalize phoneme representation
+    for word, pronunciations in cleaned_dict.items():
+        for i, pronunciation in enumerate(pronunciations):
+            # Remove stress markers
+            pronunciation = [p[:-1] if p[-1].isdigit() else p for p in pronunciation]
+            # Convert to uppercase
+            pronunciation = [p.upper() for p in pronunciation]
+            cleaned_dict[word][i] = pronunciation
+    
+    print("\nPhoneme Normalization Complete | Total Words:", len(cleaned_dict))
 
     return cleaned_dict
 
 # -----------------------------
-# 📥 DATA LOADING & PREP
+#  DATA LOADING & PREP
 # -----------------------------
 
+# ============================
+# Prep Phoneme Distance Dictionary
+# ============================
+
+# Compare every phoneme coordinate with every other, as well as itself and an empty string
+phonemes = list(PHONEME_COORDINATES.keys())
+for i, p1 in enumerate(phonemes):
+    coord1 = PHONEME_COORDINATES[p1]
+    # Get magnitude of p1 coordinates and write to file
+    magnitude = math.sqrt(sum(a ** 2 for a in coord1))
+    
+    PHONEME_DISTANCE_DICT[(p1, "")] = magnitude
+    PHONEME_DISTANCE_DICT[("", p1)] = magnitude
+    PHONEME_DISTANCE_DICT[(p1, p1)] = 0.0
+    
+    for j, p2 in enumerate(phonemes):
+        if i < j:  # Avoid duplicate pairs
+            coord2 = PHONEME_COORDINATES[p2]
+            # Compute Euclidean distance
+            dist = math.sqrt(sum((a - b) ** 2 for a, b in zip(coord1, coord2)))
+            PHONEME_DISTANCE_DICT[(p1, p2)] = dist
+            PHONEME_DISTANCE_DICT[(p2, p1)] = dist  
+
+# --------------------------------
+# Prep Dictionary
+# --------------------------------
+
+# Load NLTK
 # Load CMU Pronouncing Dictionary
 nltk.download('cmudict')
 nltk.download("wordnet")
@@ -395,13 +455,11 @@ for count, num_words in sorted(letter_count.items()):
 # 🚀 MAIN LOGIC
 # -----------------------------
 
-#write_average_levenshtein_distances(pron_dict)
+
+
+write_word_averages(pron_dict)
 
 ## Pre-compute phoneme distances.
-#create_phoneme_distance_matrix()
-#
-#if not os.path.exists("average_word_distances.csv"):
-#    write_average_word_distances(pron_dict, "average_word_distances.csv")
 #
 #best_by_letter = {}
 #with open("average_word_distances.csv", newline="") as csvfile:
