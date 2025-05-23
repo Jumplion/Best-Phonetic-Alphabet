@@ -24,8 +24,8 @@ FILTER_NON_ALPHABETIC = True    # Set to 'True' to filter out words with non-alp
 FILTER_SINGLE_LETTER = True     # Set to 'True' to filter out single letter words
 FILTER_BY_MIN_PHONEME = True     # Set to 'True' to filter out words with fewer than MIN_PHONEME_LENGTH phonemes
 FILTER_BY_MAX_PHONEME = True     # Set to 'True' to filter out words with more than MAX_PHONEME_LENGTH phonemes
-FILTER_BY_MIN_LENGTH = True         # Set to 'True' to filter out words with fewer than MIN_WORD_LENGTH letters
-FILTER_BY_MAX_LENGTH = True         # Set to 'True' to filter out words with more than MAX_WORD_LENGTH letters
+FILTER_BY_MIN_LENGTH = False         # Set to 'True' to filter out words with fewer than MIN_WORD_LENGTH letters
+FILTER_BY_MAX_LENGTH = False         # Set to 'True' to filter out words with more than MAX_WORD_LENGTH letters
 FILTER_BY_MIN_SYLLABLES = True    # Set to 'True' to filter out words with fewer than MIN_SYLLABLES syllables
 FILTER_BY_MAX_SYLLABLES = True   # Set to 'True' to filter out words with more than MAX_SYLLABLES syllables
 
@@ -89,7 +89,7 @@ BANNED_PHONEME_PREFIXES = {
 # We just don't fuck with these words. Slurs and racial remarks are a no-go, we diverse and tolerant in this sum-bitch.
 # Mostly because 'X' only has a few words that makes sense
 BANNED_WORDS = [
-    "xhosa", "xian", "xinjiang", "xenophobia", "xenophobic", "xenophon"
+    "xhosa", "xian", "xinjiang", "xenophobia", "xenophobic", "xenophon", "iwo"
 ]
 
 LEMMATIZE_DICT = True          # Set to 'True' to lemmatize words
