@@ -180,6 +180,16 @@ PHONEME_DICT = {}
 PHONEME_DISTANCE_DICT = {}
 WORDS_BY_LETTER = defaultdict(list)
 
+SIMILAR_PHONEME_PAIRS = {
+    # Similar phoneme pairs
+    ["AA", "AE"], # father, cat
+    ["AH", "AO"], # cut, caught
+    ["AO", "AW"], # caught, cow
+    ["EY", "EH"], # they, bed
+    ["IY", "IH"], # see, sit
+    ["UW", "UH"], # too, put
+}
+
 # -----------------------------
 # 📦 FUNCTION DEFINITIONS
 # -----------------------------
