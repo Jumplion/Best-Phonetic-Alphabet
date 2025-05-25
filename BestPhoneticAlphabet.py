@@ -16,30 +16,62 @@ from collections import Counter, defaultdict
 import time
 
 # 🔧 CONFIGURATION
+logging.basicConfig(
+    level=logging.INFO,  # Change to DEBUG for more detail, WARNING for less
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[
+        logging.StreamHandler(),  # Console output
+        # Uncomment below to also log to a file:
+        # logging.FileHandler("phonetic_alphabet.log")
+    ]
+)
 
 # -----------------------------
 # Filter Options
 # -----------------------------
-FILTER_NON_ALPHABETIC = True    # Set to 'True' to filter out words with non-alphabetic characters
-FILTER_SINGLE_LETTER = True     # Set to 'True' to filter out single letter words
-FILTER_BY_MIN_PHONEME = True     # Set to 'True' to filter out words with fewer than MIN_PHONEME_LENGTH phonemes
-FILTER_BY_MAX_PHONEME = True     # Set to 'True' to filter out words with more than MAX_PHONEME_LENGTH phonemes
-FILTER_BY_MIN_LENGTH = False         # Set to 'True' to filter out words with fewer than MIN_WORD_LENGTH letters
-FILTER_BY_MAX_LENGTH = False         # Set to 'True' to filter out words with more than MAX_WORD_LENGTH letters
-FILTER_BY_MIN_SYLLABLES = True    # Set to 'True' to filter out words with fewer than MIN_SYLLABLES syllables
-FILTER_BY_MAX_SYLLABLES = True   # Set to 'True' to filter out words with more than MAX_SYLLABLES syllables
+FILTER_NON_ALPHABETIC =     True    # Set to 'True' to filter out words with non-alphabetic characters
+FILTER_SINGLE_LETTER =      True    # Set to 'True' to filter out single letter words
+FILTER_BY_MIN_PHONEME =     True    # Set to 'True' to filter out words with fewer than MIN_PHONEME_LENGTH phonemes
+FILTER_BY_MAX_PHONEME =     True    # Set to 'True' to filter out words with more than MAX_PHONEME_LENGTH phonemes
+FILTER_BY_MIN_LENGTH =      True    # Set to 'True' to filter out words with fewer than MIN_WORD_LENGTH letters
+FILTER_BY_MAX_LENGTH =      False   # Set to 'True' to filter out words with more than MAX_WORD_LENGTH letters
+FILTER_BY_MIN_SYLLABLES =   True    # Set to 'True' to filter out words with fewer than MIN_SYLLABLES syllables
+FILTER_BY_MAX_SYLLABLES =   True    # Set to 'True' to filter out words with more than MAX_SYLLABLES syllables
 
-# Prefix filters
-FILTER_EU = True            # Set to 'True' to filter out words starting with "eu"
-FILTER_GN = True            # Set to 'True' to filter out words starting with "gn"
-FILTER_KN = True            # Set to 'True' to filter out words starting with "kn"
-FILTER_MN = True            # Set to 'True' to filter out words starting with "mn"
-FILTER_PH = True            # Set to 'True' to filter out words starting with "ph"
-FILTER_PN = True            # Set to 'True' to filter out words starting with "pn"
-FILTER_PS = True            # Set to 'True' to filter out words starting with "ps"
-FILTER_SH = True            # Set to 'True' to filter out words starting with "sh"
-FILTER_TH = True            # Set to 'True' to filter out words starting with "th"
-FILTER_WR = True            # Set to 'True' to filter out words starting with "wr"
+LEMMATIZE_DICT = True          # Set to 'True' to lemmatize words
+LEMMATIZE_SEVERITY = 3         # 0 (None) | 1 (Noun) | 2 (Verb) | 3 (Aggressive) | Otherwise Aggressive
+CHECK_AGAINST_WORDNET = True   # Set to 'True' to check if words exist in WordNet
+
+# -----------------------------
+# Phoneme and Word Length Options
+# -----------------------------
+MIN_PHONEME_LENGTH = 2      # Minimum number of phonemes required per word
+MAX_PHONEME_LENGTH = 10     # Maximum number of phonemes allowed per word
+MIN_WORD_LENGTH = 3         # Minimum number of letters required per word
+MAX_WORD_LENGTH = 10        # Maximum number of letters allowed per word
+MIN_SYLLABLES = 2           # Minimum number of syllables allowed per word
+MAX_SYLLABLES = 3           # Maximum number of syllables allowed per word
+
+# -----------------------------
+# Randomization Options
+# -----------------------------
+TRIALS = 10000                  # Number of random trials
+PENALIZE_LENGTH_VARIANCE = True # Set to 'True' to penalize length variance
+LENGTH_VARIANCE_WEIGHT = 10     # Adjust this weight to control penalty severity
+
+# -----------------------------
+# Individual Prefix filters
+# -----------------------------
+FILTER_EU = True    # Set to 'True' to filter out words starting with "eu"
+FILTER_GN = True    # Set to 'True' to filter out words starting with "gn"
+FILTER_KN = True    # Set to 'True' to filter out words starting with "kn"
+FILTER_MN = True    # Set to 'True' to filter out words starting with "mn"
+FILTER_PH = True    # Set to 'True' to filter out words starting with "ph"
+FILTER_PN = True    # Set to 'True' to filter out words starting with "pn"
+FILTER_PS = True    # Set to 'True' to filter out words starting with "ps"
+FILTER_SH = True    # Set to 'True' to filter out words starting with "sh"
+FILTER_TH = True    # Set to 'True' to filter out words starting with "th"
+FILTER_WR = True    # Set to 'True' to filter out words starting with "wr"
 
 PREFIX_FILTERS = {
     "eu": FILTER_EU,
@@ -86,31 +118,27 @@ BANNED_PHONEME_PREFIXES = {
     "z" : []
 }
 
-# We just don't fuck with these words. Slurs and racial remarks are a no-go, we diverse and tolerant in this sum-bitch.
-# Mostly because 'X' only has a few words that makes sense
-BANNED_WORDS = [
-    "xhosa", "xian", "xinjiang", "xenophobia", "xenophobic", "xenophon", "iwo"
+# Words that we don't want in our alphabets
+# These are words that are either offensive, inappropriate, or just don't fit the criteria
+# Some other reasons for blacklisting words:
+# - Not caught by the filters
+# - Strange pronunciations that don't fit the phonetic alphabet
+# - Words that are too similar to other words in the alphabet
+# - Slurs and racial remarks are a no-go, we diverse and tolerant in this sum-bitch
+WORD_BLACKLIST = [
+    "xhosa", 
+    "xian", 
+    "xinjiang", 
+    "xenophobia", 
+    "xenophobic", 
+    "xenophon", 
+    "iwo", 
+    "pedophile", 
+    "rapist",
 ]
 
-LEMMATIZE_DICT = True          # Set to 'True' to lemmatize words
-CHECK_AGAINST_WORDNET = True   # Set to 'True' to check if words exist in WordNet
-
-# -----------------------------
-# Phoneme and Word Length Options
-# -----------------------------
-MIN_PHONEME_LENGTH = 2          # Minimum number of phonemes required per word
-MAX_PHONEME_LENGTH = 10         # Maximum number of phonemes allowed per word
-MIN_WORD_LENGTH = 3             # Minimum number of letters required per word
-MAX_WORD_LENGTH = 10            # Maximum number of letters allowed per word
-MIN_SYLLABLES = 2                # Minimum number of syllables allowed per word
-MAX_SYLLABLES = 3               # Maximum number of syllables allowed per word
-
-# -----------------------------
-# Randomization Options
-# -----------------------------
-TRIALS = 10000                  # Number of random trials
-PENALIZE_LENGTH_VARIANCE = True # Set to 'True' to penalize length variance
-LENGTH_VARIANCE_WEIGHT = 10     # Adjust this weight to control penalty severity
+WORD_WHITELIST = [
+]
 
 # Phoneme Coordinates
 PHONEME_COORDINATES = {
@@ -180,15 +208,15 @@ PHONEME_DICT = {}
 PHONEME_DISTANCE_DICT = {}
 WORDS_BY_LETTER = defaultdict(list)
 
-SIMILAR_PHONEME_PAIRS = {
-    # Similar phoneme pairs
-    ["AA", "AE"], # father, cat
-    ["AH", "AO"], # cut, caught
-    ["AO", "AW"], # caught, cow
-    ["EY", "EH"], # they, bed
-    ["IY", "IH"], # see, sit
-    ["UW", "UH"], # too, put
-}
+#SIMILAR_PHONEME_PAIRS = {
+#    # Similar phoneme pairs
+#    ["AA", "AE"], # father, cat
+#    ["AH", "AO"], # cut, caught
+#    ["AO", "AW"], # caught, cow
+#    ["EY", "EH"], # they, bed
+#    ["IY", "IH"], # see, sit
+#    ["UW", "UH"], # too, put
+#}
 
 # -----------------------------
 # 📦 FUNCTION DEFINITIONS
@@ -234,9 +262,10 @@ def shared_phoneme_sequences(p1, p2):
 
 # Sums the Levenshtein distances between all pairs of words in a set.
 def total_levenshtein_distance(word_set):
+    i = itertools.combinations(word_set, 2)
     distances = [
         levenshtein_distance(w1, w2)
-        for w1, w2 in itertools.combinations(word_set, 2)
+        for w1, w2 in i
     ]
     base_score = sum(distances)
 
@@ -250,18 +279,20 @@ def total_levenshtein_distance(word_set):
     
 # Compute the total distance score for a set of words.
 def total_phoneme_distance(word_set):
+    i = itertools.combinations(word_set, 2)
     distances = [
         phoneme_distance(PHONEME_DICT[w1][0], PHONEME_DICT[w2][0])
-        for w1, w2 in itertools.combinations(word_set, 2)
+        for w1, w2 in i
     ]
 
     return sum(distances)
 
 # Compute the total shared phoneme distance for a set of words.
 def total_shared_phoneme_distance(word_set):
+    i = itertools.combinations(word_set, 2)
     distances = [
         shared_phoneme_sequences(PHONEME_DICT[w1][0], PHONEME_DICT[w2][0])
-        for w1, w2 in itertools.combinations(word_set, 2)
+        for w1, w2 in i
     ]
 
     return sum(distances)
@@ -343,47 +374,57 @@ def find_best_set_randomized(trials=1000):
 def write_word_averages(pron_dict):
     with open("word_score_averages.csv", "w", newline="") as avg_csvfile:
         avg_writer = csv.writer(avg_csvfile)
-        avg_writer.writerow(["Word", "Phonemes", "Magnitude", "Average Levenshtein Distance", "Average Phoneme Distance (Basic)", "Average Shared Phoneme Sequence Count", "Calculation Time"])
+        avg_writer.writerow([
+            "Word", "Phonemes", "Magnitude", "Average Levenshtein Distance",
+            "Average Phoneme Distance (Basic)", "Average Shared Phoneme Sequence Count", "Calculation Time"
+        ])
 
         all_magnitudes = 0
         all_levenshtein = 0
         all_phoneme = 0
         all_shared = 0
         all_time = 0
-        
-        # For each word, compare it to every other word (excluding words with the same first letter),
-        # compute the average Levenshtein distance, and write results to a CSV file.
-        total_words = len(list(pron_dict.keys()))
-        for i, word1 in enumerate(list(pron_dict.keys())):
-            print(f"Processing word {i + 1}/{total_words}: {word1}")
-            
+
+        word_list = list(pron_dict.keys())
+        total_words = len(word_list)
+
+        current_letter = "A"
+        logging.info("Processing words starting with 'A' (%d/%d)", 0, total_words)
+
+        for word1 in word_list:
             start_time = time.time()
+
+            # Progress indicators using logging
+            if word1[0].upper() != current_letter:
+                current_letter = word1[0].upper()
+                logging.info("Processing words starting with '%s' (%d/%d)", current_letter, i + 1, total_words)
+
+            ind = word_list.index(word1)
+            logging.debug("Processing word (%d/%d): %s", ind + 1, total_words, word1)
             
+            # Log progress every 100 words
+            if (ind + 1) % 25 == 0 or (ind + 1) == total_words:
+                logging.info("Progress: %d/%d (%.1f%%)", ind + 1, total_words, ((ind + 1) / total_words) * 100)
+
             word1_pron = pron_dict[word1][0]
-            
+
             total_dist_levenshtein = 0.0
             total_dist_phoneme = 0.0
             total_shared = 0.0
-            
             count = 0
+
+            filtered_words = [w for w in word_list if w[0].upper() != word1[0].upper() and w != word1]
             
-            # Go through check_dict and calculate the distance
-            # between word1 and every other word in the dictionary
-            for j, word2 in enumerate(list(pron_dict.keys())):
-                if i == j or word2[0].upper() == word1[0].upper():
-                    continue
-                
+            for word2 in filtered_words:
                 word2_pron = pron_dict[word2][0]
-
                 total_dist_levenshtein += levenshtein_distance(word1, word2)
-                total_dist_phoneme += sum(phoneme_distance(a,b) for a,b in itertools.zip_longest(word1_pron, word2_pron, fillvalue=""))   
+                total_dist_phoneme += sum(phoneme_distance(a, b) for a, b in itertools.zip_longest(word1_pron, word2_pron, fillvalue=""))
                 total_shared += shared_phoneme_sequences(word1_pron, word2_pron)
-
                 count += 1
-            
+
             magnitude = sum(PHONEME_DISTANCE_DICT.get((p, ""), 0) for p in word1_pron) / len(word1_pron)
-            avg_levenshtein = total_dist_levenshtein / count            
-            avg_phoneme = total_dist_phoneme / count          
+            avg_levenshtein = total_dist_levenshtein / count
+            avg_phoneme = total_dist_phoneme / count
             avg_shared = total_shared / count
             compute_time = time.time() - start_time
 
@@ -392,107 +433,62 @@ def write_word_averages(pron_dict):
             all_phoneme += avg_phoneme
             all_shared += avg_shared
             all_time += compute_time
-            
-            # Write the results to the CSV file
-            word1_pron = " ".join(word1_pron)
-            avg_writer.writerow([word1, word1_pron, magnitude, avg_levenshtein, avg_phoneme, avg_shared, compute_time])         
-        
-        # Write the averages to the CSV file
+
+            word1_pron_str = " ".join(word1_pron)
+            avg_writer.writerow([word1, word1_pron_str, magnitude, avg_levenshtein, avg_phoneme, avg_shared, compute_time])
+
         all_magnitudes /= total_words
         all_levenshtein /= total_words
         all_phoneme /= total_words
         all_shared /= total_words
         all_time /= total_words
-        avg_writer.writerow(["Total Averages", "", all_magnitudes, all_levenshtein, all_phoneme, all_shared, all_time])
-        
+        avg_writer.writerow([
+            "Total Averages", "", all_magnitudes, all_levenshtein, all_phoneme, all_shared, all_time
+        ])
+
+        logging.info("Word Averages Written to 'word_score_averages.csv'")
+        logging.info(
+            "Total Magnitude: %.6f | Average Levenshtein Distance: %.6f | Average Phoneme Distance: %.6f | "
+            "| Average Shared Phoneme Sequence Count: %.6f | Average Calculation Time: %.6f seconds",
+            all_magnitudes, all_levenshtein, all_phoneme, all_shared, all_time
+        )# -----------------------------
+
 # Clean the CMU Pronouncing Dictionary and apply filters.
 def get_cleaned_cmu_dict():
-    print("\nCMU Dictionary Loaded | Total Words:", len(cmudict.dict()))
-
-    filters_list = [
-        FILTER_SINGLE_LETTER,
-        FILTER_BY_MIN_PHONEME,
-        FILTER_BY_MAX_PHONEME,
-        FILTER_BY_MIN_LENGTH,
-        FILTER_BY_MAX_LENGTH,
-        CHECK_AGAINST_WORDNET,
-        LEMMATIZE_DICT
-    ]
-
-    # Check if any filters are active
-    if not any(filters_list):
-        print("\nNo Filters Active | All Words Kept")
-    else:
-        print("\n - [Filters Active] - \n")
-        # Print the filters that are active
-        if FILTER_NON_ALPHABETIC:
-            print(" - [Words With Non-Alphabetic Characters]")
-        if FILTER_SINGLE_LETTER:
-            print(" - [Single Letter Words]")
-        if FILTER_BY_MIN_PHONEME:
-            print(" - [Min Phoneme Length (", MIN_PHONEME_LENGTH, ")")
-        if FILTER_BY_MAX_PHONEME:
-            print(" - [Max Phoneme Length (", MAX_PHONEME_LENGTH, ")")
-        if FILTER_BY_MIN_LENGTH:
-            print(" - [Min Word Length (",MIN_WORD_LENGTH, ")")
-        if FILTER_BY_MAX_LENGTH:
-            print(" - [Max Word Length (", MAX_WORD_LENGTH, ")")
-        if CHECK_AGAINST_WORDNET:
-            print(" - [WordNet Check]")
-        if LEMMATIZE_DICT:
-            print(" - [Lemmatization]")
-
-    cleaned_dict = cmudict.dict()
+    logging.info("CMU Dictionary Loaded | Total Words: %d", len(cmudict.dict()))
+    logging.info("Cleaning CMU Dictionary...")
     
+    cleaned_dict = cmudict.dict()
     # Normalize the dictionary
-    for word in list(cleaned_dict.keys()):
-        # Remove words with non-alphabetic characters
-        if FILTER_NON_ALPHABETIC and not word.isalpha():
-            del cleaned_dict[word]
-        # Remove banned words
-        elif word in BANNED_WORDS:
-            del cleaned_dict[word]    
-        # Remove words that contain any of the specified prefixes
-        elif any(word.startswith(prefix) for prefix, active in PREFIX_FILTERS.items() if active):
-            del cleaned_dict[word]
-        # Remove words with fewer than MIN_PHONEME_LENGTH
-        elif FILTER_BY_MIN_PHONEME and len(cleaned_dict[word][0]) < MIN_PHONEME_LENGTH:
-            del cleaned_dict[word]
-        # Remove words with more than MAX_PHONEME_LENGTH
-        elif FILTER_BY_MAX_PHONEME and len(cleaned_dict[word][0]) > MAX_PHONEME_LENGTH:
-            del cleaned_dict[word]
-        # Remove words that less than 2 letters long
-        elif FILTER_BY_MIN_LENGTH and len(word) < MIN_WORD_LENGTH:
-            del cleaned_dict[word]
-        # Remove words that are longer than 15 letters
-        elif FILTER_BY_MAX_LENGTH and len(word) > MAX_WORD_LENGTH:
-            del cleaned_dict[word]
-        # Remove words that are made up of a single letter repeated
-        elif FILTER_SINGLE_LETTER and len(set(word)) == 1:
-            del cleaned_dict[word]
-        # Remove words that have a banned phoneme prefix
-        elif any(word.startswith(prefix) for prefix in BANNED_PHONEME_PREFIXES.get(word[0].lower(), [])):
-            del cleaned_dict[word]
-        # Remove words that are not in WordNet (if CHECK_AGAINST_WORDNET is True) (Results in about 25k words left, 80k without checking)
-        elif CHECK_AGAINST_WORDNET and not wordnet.synsets(word):
-            del cleaned_dict[word]
-        # MUST BE AFTER EVERYTHING | Remove words with less/more than MIN/MAX Syllables
-        elif FILTER_BY_MIN_SYLLABLES or FILTER_BY_MAX_SYLLABLES:
-            syllable_count = len([p for p in cleaned_dict[word][0] if p[-1].isdigit()])
-            if syllable_count < MIN_SYLLABLES or syllable_count > MAX_SYLLABLES:
-                del cleaned_dict[word]
-                
-    print("\nCulling Complete | Total Words:", len(cleaned_dict))
+    cleaned_dict = {
+        word: prons for word, prons in cleaned_dict.items()
+        if (
+            (word in WORD_WHITELIST) or
+            (FILTER_NON_ALPHABETIC and word.isalpha()) and
+            (word not in WORD_BLACKLIST) and
+            (not any(word.startswith(prefix) for prefix, active in PREFIX_FILTERS.items() if active)) and
+            (not FILTER_BY_MIN_PHONEME or len(prons[0]) >= MIN_PHONEME_LENGTH) and
+            (not FILTER_BY_MAX_PHONEME or len(prons[0]) <= MAX_PHONEME_LENGTH) and
+            (not FILTER_BY_MIN_LENGTH or len(word) >= MIN_WORD_LENGTH) and
+            (not FILTER_BY_MAX_LENGTH or len(word) <= MAX_WORD_LENGTH) and
+            (not FILTER_SINGLE_LETTER or len(set(word)) > 1) and
+            (not any(word.startswith(prefix) for prefix in BANNED_PHONEME_PREFIXES.get(word[0].lower(), []))) and
+            (not CHECK_AGAINST_WORDNET or wordnet.synsets(word)) and
+            (
+                not (FILTER_BY_MIN_SYLLABLES or FILTER_BY_MAX_SYLLABLES) or
+                (MIN_SYLLABLES <= len([p for p in prons[0] if p[-1].isdigit()]) <= MAX_SYLLABLES)
+            )
+        )
+    }              
+    logging.info("Culling Complete | Total Words: %d", len(cleaned_dict))
 
     if LEMMATIZE_DICT:
-        print("\nLemmatizing Words...")
-        
-        # Create a lemmatizer
+        logging.info("Lemmatizing Words...")
         lemmatizer = WordNetLemmatizer()
         lemma_map = defaultdict(list)
         
         # Lemmatize the words, group by lemma
-        for word, prons in cleaned_dict.items():
+        for word, prons in cleaned_dict.items():       
             noun = lemmatizer.lemmatize(word.lower(), pos='n')
             lemma = lemmatizer.lemmatize(noun, pos='v')
             lemma_map[lemma].append((word, prons[0]))
@@ -504,20 +500,15 @@ def get_cleaned_cmu_dict():
             temp_dict[representative[0]] = [representative[1]]  # keep as list for CMU compatibility 
         
         cleaned_dict = temp_dict
-        print("\nLemmatization Complete | Total Words:", len(cleaned_dict))
+        logging.info("Lemmatization Complete | Total Words: %d", len(cleaned_dict))
 
-    print("\nCleaning Phoneme Representation")
-    print("\n - [Removing stress markers and numbers for simplicity]")
     # Normalize phoneme representation
+    logging.info("Cleaning Phoneme Representation")
+    logging.info(" - Removing stress markers and numbers for simplicity")
     for word, pronunciations in cleaned_dict.items():
-        for i, pronunciation in enumerate(pronunciations):
-            # Remove stress markers
-            pronunciation = [p[:-1] if p[-1].isdigit() else p for p in pronunciation]
-            # Convert to uppercase
-            pronunciation = [p.upper() for p in pronunciation]
-            cleaned_dict[word][i] = pronunciation
+        cleaned_dict[word] = [[p.upper() for p in [p[:-1] if p[-1].isdigit() else p for p in pron]] for pron in pronunciations]
     
-    print("\nPhoneme Normalization Complete | Total Words:", len(cleaned_dict))
+    logging.info("Phoneme Normalization Complete | Total Words: %d", len(cleaned_dict))
 
     return cleaned_dict
 
@@ -565,50 +556,58 @@ for word in PHONEME_DICT.keys():
     WORDS_BY_LETTER[word[0].upper()].append(word)
 
 # Print the number of words for each letter
-print("\nWords by Letter")
+logging.info("Words by Letter")
 for letter in sorted(WORDS_BY_LETTER.keys()):
     print(f"{letter}: {len(WORDS_BY_LETTER[letter])} words")
 
 # Print total number of words per number of phonemes
-print("\nWords by Number of Phonemes")
 phoneme_count = defaultdict(int)
+letter_count = defaultdict(int)
+
 for word in PHONEME_DICT.keys():
     phoneme_count[len(PHONEME_DICT[word][0])] += 1
+    letter_count[len(word)] += 1
+    
+logging.info("Words by Number of Phonemes")
 for count, num_words in sorted(phoneme_count.items()):
-    print(f"{count} phonemes: {num_words} words")
+    logging.info("%d phonemes: %d words", count, num_words)
 
 # Print total number of words per number of letters
-print("\nWords by Length")
-letter_count = defaultdict(int)
-for word in PHONEME_DICT.keys():
-    letter_count[len(word)] += 1
+logging.info("Words by Length")
 for count, num_words in sorted(letter_count.items()):
-    print(f"{count} letters: {num_words} words")
+    logging.info("%d letters: %d words", count, num_words)
 
 # -----------------------------
 # 🚀 MAIN LOGIC
 # -----------------------------
 
-#write_word_averages(PHONEME_DICT)
+# PAUSE For user to read the configuration
+input("Press Enter to continue...")
 
+# Write the word averages to a CSV file
+logging.info("Calculating Word Averages (this may take a while)...")
+logging.info("This will write a file called 'word_score_averages.csv' in the current directory.")
+averaged_words = write_word_averages(PHONEME_DICT)
+
+logging.info("Starting Randomized Search for Best Set of Words...")
 best_scores, best_set, best_levenshtein, best_phoneme, best_shared = find_best_set_randomized(trials=TRIALS)
 
-# Print best levenshtein set
-print(f"\nBest Levenshtein Set ({best_scores['best levenshtein']:.6f}):")
+# Log best levenshtein set
+logging.info("Best Levenshtein Set (%.6f):", best_scores['best levenshtein'])
 for word in best_levenshtein:
-    print(f"{word.capitalize():<12}  ->  {' '.join(PHONEME_DICT[word][0])}")
+    logging.info("%-12s  ->  %s", word.capitalize(), ' '.join(PHONEME_DICT[word][0]))
 
-# Print best phoneme set
-print(f"\nBest Phoneme Distance Set ({best_scores['best phoneme']:.6f}):")
+# Log best phoneme set
+logging.info("Best Phoneme Distance Set (%.6f):", best_scores['best phoneme'])
 for word in best_phoneme:
-    print(f"{word.capitalize():<12}  ->  {' '.join(PHONEME_DICT[word][0])}")
+    logging.info("%-12s  ->  %s", word.capitalize(), ' '.join(PHONEME_DICT[word][0]))
 
-# Print best shared set
-print(f"\nBest Shared Phoneme Sequence Count Set ({best_scores['best shared']:.6f}):")
+# Log best shared set
+logging.info("Best Shared Phoneme Sequence Count Set (%.6f):", best_scores['best shared'])
 for word in best_shared:
-    print(f"{word.capitalize():<12}  ->  {' '.join(PHONEME_DICT[word][0])}")
+    logging.info("%-12s  ->  %s", word.capitalize(), ' '.join(PHONEME_DICT[word][0]))
 
-# Print best overall set
-print("\nBest Overall Set:")
+# Log best overall set
+logging.info("Best Overall Set:")
 for word in best_set:
-    print(f"{word.capitalize():<12}  ->  {' '.join(PHONEME_DICT[word][0])}")
+    logging.info("%-12s  ->  %s", word.capitalize(), ' '.join(PHONEME_DICT[word][0]))
