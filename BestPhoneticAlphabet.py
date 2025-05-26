@@ -562,9 +562,11 @@ TRIALS = max(TRIALS, 1)  # Ensure at least one trial
 best_scores, best_set, best_levenshtein, best_phoneme, best_shared = find_best_set_randomized(trials=TRIALS)
 
 def log_scores(score, list_name, words):
+    logging.info("--------------------------------")
     logging.info("Best %s Set (%.6f):", list_name, score)
+    logging.info("--------------------------------")
     for word in words:
-        logging.info("%-12s  ->  %sf", word.capitalize(), ' '.join(PHONEME_DICT[word][0]))
+        logging.info("%-12s  ->  %s", word.capitalize(), ' '.join(PHONEME_DICT[word][0]))
 
 # Log best levenshtein set
 log_scores(best_scores['best levenshtein'], "Levenshtein Distance", best_levenshtein)
