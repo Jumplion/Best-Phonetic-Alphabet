@@ -5,6 +5,7 @@ import random
 import logging
 import itertools
 from collections import defaultdict
+import concurrent.futures
 
 import numpy as np
 from tqdm import tqdm
@@ -265,28 +266,24 @@ def total_levenshtein_distance(word_set):
 
     return base_score - penalty
 
-# Compute the total distance score for a set of words (no parallel processing).
-def total_phoneme_distance(word_set):
+# Calculate the total phoneme distance for a set of words.
+# This function can calculate both basic phoneme distance and shared phoneme sequences.
+def total_phoneme_distance(word_set, sequence=False):
     pairs = list(itertools.combinations(word_set, 2))
-    distances = [phoneme_distance(PHONEME_DICT[w1][0], PHONEME_DICT[w2][0]) for w1, w2 in pairs]
-    return sum(distances)
-
-# Compute the total shared phoneme distance for a set of words (no parallel processing).
-def total_shared_phoneme_distance(word_set):
-    pairs = list(itertools.combinations(word_set, 2))
-    distances = [shared_phoneme_sequences(PHONEME_DICT[w1][0], PHONEME_DICT[w2][0]) for w1, w2 in pairs]
+    func = phoneme_distance if not sequence else shared_phoneme_sequences
+    distances = [func(PHONEME_DICT[w1][0], PHONEME_DICT[w2][0]) for w1, w2 in pairs]
     return sum(distances)
 
 # Helper function for scoring a candidate (no parallel processing).
 def _score_candidate(candidate):
     avg_levenshtein = total_levenshtein_distance(candidate) / len(candidate)
-    avg_phoneme = total_phoneme_distance(candidate) / len(candidate)
-    avg_shared = total_shared_phoneme_distance(candidate) / len(candidate)
+    avg_phoneme = total_phoneme_distance(candidate, False) / len(candidate)
+    avg_shared = total_phoneme_distance(candidate, True) / len(candidate)
     score = avg_levenshtein + avg_phoneme - avg_shared
     return (score, avg_levenshtein, avg_phoneme, avg_shared, candidate)
 
 # Find the best set of words via random sampling (no parallel processing).
-def find_best_set_randomized(trials=1000, max_workers=None): 
+def find_best_set_randomized(trials=1000): 
     logging.info("Starting Randomized Search for Best Set of Words...")
     best_score = best_score_levenshtein = best_score_phoneme = -1
     best_score_shared = 99999999999
@@ -339,61 +336,63 @@ def find_best_set_randomized(trials=1000, max_workers=None):
 
     return best_scores, best_set, best_levenshtein, best_phoneme, best_shared
 
+# Helper function for parallel processing of word distances.
+def _word1_distances(args):
+    word1, word1_pron, filtered_words, pron_dict, phoneme_distances = args
+    total_dist_levenshtein = total_dist_phoneme = total_shared = count = 0.0
+    
+    for word2 in filtered_words:
+        word2_pron = pron_dict[word2][0]
+        total_dist_levenshtein += levenshtein_distance(word1, word2)
+        total_dist_phoneme += sum(phoneme_distance(a, b) for a, b in itertools.zip_longest(word1_pron, word2_pron, fillvalue=""))
+        total_shared += shared_phoneme_sequences(word1_pron, word2_pron)
+        count += 1
+    
+    # Calculate the magnitude of the phoneme sequence
+    magnitude = math.sqrt(sum(phoneme_distances.get((p1, p2), 0) ** 2 for p1, p2 in zip(word1_pron, word1_pron)))
+    return magnitude, total_dist_levenshtein, total_dist_phoneme, total_shared, count
+
 # Calculate and write word averages to a CSV file.
-def write_word_averages(PHONEME_DICT):
+def write_word_averages(p_dict, p_distance_dict):
     if os.path.exists("word_score_averages.csv"):
         overwrite = input("File 'word_score_averages.csv' already exists. Recalculate and overwrite? (y/n): ").strip().lower()
         if overwrite != 'y':
             logging.info("Exiting without overwriting the file.")
             return
-
-    # Delete the file if it exists
-    if os.path.exists("word_score_averages.csv"):
-        os.remove("word_score_averages.csv")
+        else:
+            os.remove("word_score_averages.csv")
     
-    logging.info("Writing word averages to 'word_score_averages.csv'...")
+    log_console_header("Writing Word Averages to 'word_score_averages.csv'")
     with open("word_score_averages.csv", "w", newline="") as avg_csvfile:
         avg_writer = csv.writer(avg_csvfile)
-        avg_writer.writerow([
-            "Word", "Phonemes", "Magnitude", "Average Levenshtein Distance",
-            "Average Phoneme Distance (Basic)", "Average Shared Phoneme Sequence Count"
-        ])
+        avg_writer.writerow(["Word", "Phonemes", "Magnitude", "Average Levenshtein Distance", "Average Phoneme Distance (Basic)", "Average Shared Phoneme Sequence Count"])
+        word_list = list(p_dict.keys())
 
-        all_magnitudes = all_levenshtein = all_phoneme = all_shared = 0
+        log_console_header("Total Words to Process", len(word_list))
+        args_list = []
+        for word1 in tqdm(word_list, desc="Preparing Arguments for Parallel Processing", unit="word"):
+            word1_pron = p_dict[word1][0]
+            filtered_words = [w for w in word_list if w[0].upper() != word1[0].upper()]
+            args_list.append((word1, word1_pron, filtered_words, p_dict, p_distance_dict))
 
-        word_list = list(PHONEME_DICT.keys())
+        log_console_header("Starting Parallel Processing of Word Distances (this might take a minute)...")
+        with concurrent.futures.ProcessPoolExecutor() as executor:
+            results = list(tqdm(executor.map(_word1_distances, args_list), total=len(args_list), desc="Calculating Word Scores", unit="word"))
 
-        for ind, word1 in enumerate(tqdm(PHONEME_DICT, desc="Calculating Word Scores", unit="word")):
-            word1_pron = PHONEME_DICT[word1][0]
-            filtered_words = [w for w in word_list if w[0].upper() != word1[0].upper() and w != word1]
-            total_dist_levenshtein = total_dist_phoneme = total_shared = count = 0.0
-
-            for word2 in filtered_words:
-                word2_pron = PHONEME_DICT[word2][0]
-                total_dist_levenshtein += levenshtein_distance(word1, word2)
-                total_dist_phoneme += sum(phoneme_distance(a, b) for a, b in itertools.zip_longest(word1_pron, word2_pron, fillvalue=""))
-                total_shared += shared_phoneme_sequences(word1_pron, word2_pron)
-                count += 1
-
-            magnitude = sum(PHONEME_DISTANCE_DICT.get((p, ""), 0) for p in word1_pron) / len(word1_pron)
-            avg_levenshtein = total_dist_levenshtein / count if count else 0
-            avg_phoneme = total_dist_phoneme / count if count else 0
-            avg_shared = total_shared / count if count else 0
-
-            all_magnitudes += magnitude
-            all_levenshtein += avg_levenshtein
-            all_phoneme += avg_phoneme
-            all_shared += avg_shared
-
+        for ind, args in tqdm(enumerate(args_list), desc="Processing Results", total=len(args_list), unit="word"):
+            word1, word1_pron = args[:2]
+            magnitude, total_dist_levenshtein, total_dist_phoneme, total_shared, count = results[ind]
+            avg_levenshtein = total_dist_levenshtein / count
+            avg_phoneme = total_dist_phoneme / count
+            avg_shared = total_shared / count
             word1_pron_str = " ".join(word1_pron)
             avg_writer.writerow([word1, word1_pron_str, magnitude, avg_levenshtein, avg_phoneme, avg_shared])
             logging.debug(
-                "Word: %-12s | Phonemes: %-20s | Magnitude: %.6f | Avg Levenshtein: %.6f | "
-                "Avg Phoneme Dist: %.6f | Avg Shared Seq Count: %.6f",
+                "Word: %-12s | Phonemes: %-20s | Magnitude: %.6f | Avg Levenshtein: %.6f | Avg Phoneme Dist: %.6f | Avg Shared Seq Count: %.6f",
                 word1, word1_pron_str, magnitude, avg_levenshtein, avg_phoneme, avg_shared
             )
 
-        logging.info("Word Averages Written to 'word_score_averages.csv'")
+        log_console_header("Word Averages Written to 'word_score_averages.csv'")
 
 # Load word averages from a CSV file.
 def load_word_averages(filename="word_score_averages.csv"):
@@ -412,9 +411,7 @@ def load_word_averages(filename="word_score_averages.csv"):
             avg_levenshtein = float(row[3])
             avg_phoneme = float(row[4])
             avg_shared = float(row[5])
-            averages[word] = {"phonemes": phonemes, "magnitude": magnitude, "avg_levenshtein": avg_levenshtein,
-                "avg_phoneme": avg_phoneme, "avg_shared": avg_shared
-            }
+            averages[word] = {"phonemes": phonemes, "magnitude": magnitude, "avg_levenshtein": avg_levenshtein, "avg_phoneme": avg_phoneme, "avg_shared": avg_shared }
     return averages
 
 # Compare every phoneme coordinate with every other, as well as itself and an empty string
@@ -501,78 +498,85 @@ def get_cleaned_cmu_dict():
 # 🚀 MAIN LOGIC
 # -----------------------------
 
-logging.info("Starting Best Phonetic Alphabet Search...")
+def log_console_header(message, data=None):
+    logging.info("--------------------------------")
+    if data:
+        logging.info("%s: %s", message, data)
+    else:
+        logging.info(message)
+    logging.info("--------------------------------")
 
-# Load NLTK resources
-nltk.download('cmudict')
-nltk.download("wordnet")
+def main():
 
-PHONEME_DISTANCE_DICT = get_phoneme_distance_dict()
-PHONEME_DICT = get_cleaned_cmu_dict()
-WORDS_BY_LETTER = defaultdict(list)
+    log_console_header("Starting Best Phonetic Alphabet Search")
 
-phoneme_count = defaultdict(int)
-letter_count = defaultdict(int)
+    # Load NLTK resources
+    nltk.download('cmudict')
+    nltk.download("wordnet")
 
-# Print out table in python console
-logging.info("Phoneme Distance Dictionary Created | Total Phonemes: %d", len(PHONEME_DISTANCE_DICT))
 
-for word in PHONEME_DICT.keys():
-    WORDS_BY_LETTER[word[0].upper()].append(word)
-    phoneme_count[len(PHONEME_DICT[word][0])] += 1
-    letter_count[len(word)] += 1   
+    PHONEME_DICT = get_cleaned_cmu_dict()
 
-# Print the number of words for each letter
-logging.info("--------------------------------")
-logging.info("Words by Letter")
-logging.info("--------------------------------")  
-for letter in sorted(WORDS_BY_LETTER.keys()):
-    logging.info("%s: %d words", letter, len(WORDS_BY_LETTER[letter]))
-
-logging.info("--------------------------------")
-logging.info("Words by Number of Phonemes")
-logging.info("--------------------------------")
-for count, num_words in sorted(phoneme_count.items()):
-    logging.info("%d phonemes: %d words", count, num_words)
-
-# Print total number of words per number of letters
-logging.info("--------------------------------")
-logging.info("Words by Length")
-logging.info("--------------------------------")
-for count, num_words in sorted(letter_count.items()):
-    logging.info("%d letters: %d words", count, num_words)
-
-logging.info("--------------------------------")
-logging.info("Total Words in CMU Dictionary: %d", len(PHONEME_DICT))
-logging.info("--------------------------------")
 # --------------------------------
+# Print out Stats for Dictionary
+# --------------------------------
+
+    log_console_header("Total Words in Dictionary", len(PHONEME_DICT)) 
+    
+    WORDS_BY_LETTER = defaultdict(list)
+    phoneme_count = defaultdict(int)
+    letter_count = defaultdict(int)
+    for word in PHONEME_DICT.keys():
+        WORDS_BY_LETTER[word[0].upper()].append(word)
+        phoneme_count[len(PHONEME_DICT[word][0])] += 1
+        letter_count[len(word)] += 1   
+
+    log_console_header("Words by Letter") 
+    for letter in sorted(WORDS_BY_LETTER.keys()):
+        logging.info("%s: %d words", letter, len(WORDS_BY_LETTER[letter]))
+
+    log_console_header("Words by Phoneme Count")
+    for count, num_words in sorted(phoneme_count.items()):
+        logging.info("%d phonemes: %d words", count, num_words)
+
+    log_console_header("Words by Letter Count")
+    for count, num_words in sorted(letter_count.items()):
+        logging.info("%d letters: %d words", count, num_words)
+    
+# --------------------------------    
 # Calculate word averages
 # --------------------------------
 
-# Write the word averages to a CSV file
-write_word_averages(PHONEME_DICT)
+    # Write the word averages to a CSV file
+    
+    # Ask user if they want to calculate word averages
+    calculate_averages = input("Calculate word averages? (y/n, default 'y'): ").strip().lower() or 'y'
+    if calculate_averages == 'y':
+        log_console_header("Calculating Word Averages")
+        write_word_averages(PHONEME_DICT, get_phoneme_distance_dict())
 
-# Load the word averages from the CSV file
-WORD_AVERAGES = load_word_averages("word_score_averages.csv")
+    log_console_header("Beginning Best Set Search")
+    # Ask user how many trials to run
+    TRIALS = int(input("Enter the number of trials to run (default 100000): ") or "100000")
+    TRIALS = max(TRIALS, 1)  # Ensure at least one trial
 
-# Ask user how many trials to run
-TRIALS = int(input("Enter the number of trials to run (default 100000): ") or "100000")
-TRIALS = max(TRIALS, 1)  # Ensure at least one trial
+    best_scores, best_set, best_levenshtein, best_phoneme, best_shared = find_best_set_randomized(trials=TRIALS)
 
-best_scores, best_set, best_levenshtein, best_phoneme, best_shared = find_best_set_randomized(trials=TRIALS)
+    def log_scores(score, list_name, words):
+        logging.info("--------------------------------")
+        logging.info("Best %s Set (%.6f):", list_name, score)
+        logging.info("--------------------------------")
+        for word in words:
+            logging.info("%-12s  ->  %s", word.capitalize(), ' '.join(PHONEME_DICT[word][0]))
 
-def log_scores(score, list_name, words):
-    logging.info("--------------------------------")
-    logging.info("Best %s Set (%.6f):", list_name, score)
-    logging.info("--------------------------------")
-    for word in words:
-        logging.info("%-12s  ->  %s", word.capitalize(), ' '.join(PHONEME_DICT[word][0]))
+    # Log best levenshtein set
+    log_scores(best_scores['best levenshtein'], "Levenshtein Distance", best_levenshtein)
+    # Log best phoneme set
+    log_scores(best_scores['best phoneme'], "Phoneme Distance", best_phoneme)
+    # Log best shared set
+    log_scores(best_scores['best shared'], "Shared Phoneme Sequence Count", best_shared)
+    # Log best overall set
+    log_scores(best_scores['score'], "Overall", best_set)
 
-# Log best levenshtein set
-log_scores(best_scores['best levenshtein'], "Levenshtein Distance", best_levenshtein)
-# Log best phoneme set
-log_scores(best_scores['best phoneme'], "Phoneme Distance", best_phoneme)
-# Log best shared set
-log_scores(best_scores['best shared'], "Shared Phoneme Sequence Count", best_shared)
-# Log best overall set
-log_scores(best_scores['score'], "Overall", best_set)
+if __name__ == "__main__":
+    main()
