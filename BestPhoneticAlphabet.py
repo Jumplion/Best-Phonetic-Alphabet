@@ -18,7 +18,7 @@ import editdistance
 
 # 🔧 CONFIGURATION
 logging.basicConfig(
-    level=logging.INFO,  # Change to DEBUG for more detail, WARNING for less
+    level=logging.DEBUG,  # Change to DEBUG for more detail, WARNING for less
     format='%(asctime)s [%(levelname)s] %(message)s',
     handlers=[
         logging.StreamHandler(),  # Console output
@@ -56,7 +56,7 @@ MAX_SYLLABLES = 3           # Maximum number of syllables allowed per word
 # -----------------------------
 # Randomization Options
 # -----------------------------
-TRIALS = 100000                  # Number of random trials
+TRIALS = 10000                  # Number of random trials
 PENALIZE_LENGTH_VARIANCE = True # Set to 'True' to penalize length variance
 LENGTH_VARIANCE_WEIGHT = 10     # Adjust this weight to control penalty severity
 
@@ -349,7 +349,7 @@ def _word1_distances(args):
         count += 1
     
     # Calculate the magnitude of the phoneme sequence
-    magnitude = math.sqrt(sum(phoneme_distances.get((p1, p2), 0) ** 2 for p1, p2 in zip(word1_pron, word1_pron)))
+    magnitude = math.sqrt(sum(phoneme_distances.get((p, ""), 0) ** 2 for p in word1_pron))
     return magnitude, total_dist_levenshtein, total_dist_phoneme, total_shared, count
 
 # Calculate and write word averages to a CSV file.
@@ -369,10 +369,41 @@ def write_word_averages(p_dict, p_distance_dict):
         word_list = list(p_dict.keys())
 
         log_console_header("Total Words to Process", len(word_list))
+        
+        # Filter Word lists excluding words starting with each letter
+        filter_word_list = {
+            "A": [w for w in word_list if w[0].upper() != "A"],
+            "B": [w for w in word_list if w[0].upper() != "B"],
+            "C": [w for w in word_list if w[0].upper() != "C"],
+            "D": [w for w in word_list if w[0].upper() != "D"],
+            "E": [w for w in word_list if w[0].upper() != "E"],
+            "F": [w for w in word_list if w[0].upper() != "F"],
+            "G": [w for w in word_list if w[0].upper() != "G"],
+            "H": [w for w in word_list if w[0].upper() != "H"],
+            "I": [w for w in word_list if w[0].upper() != "I"],
+            "J": [w for w in word_list if w[0].upper() != "J"],
+            "K": [w for w in word_list if w[0].upper() != "K"],
+            "L": [w for w in word_list if w[0].upper() != "L"],
+            "M": [w for w in word_list if w[0].upper() != "M"],
+            "N": [w for w in word_list if w[0].upper() != "N"],
+            "O": [w for w in word_list if w[0].upper() != "O"],
+            "P": [w for w in word_list if w[0].upper() != "P"],
+            "Q": [w for w in word_list if w[0].upper() != "Q"],
+            "R": [w for w in word_list if w[0].upper() != "R"],
+            "S": [w for w in word_list if w[0].upper() != "S"],
+            "T": [w for w in word_list if w[0].upper() != "T"],
+            "U": [w for w in word_list if w[0].upper() != "U"],
+            "V": [w for w in word_list if w[0].upper() != "V"],
+            "W": [w for w in word_list if w[0].upper() != "W"],
+            "X": [w for w in word_list if w[0].upper() != "X"],
+            "Y": [w for w in word_list if w[0].upper() != "Y"],
+            "Z": [w for w in word_list if w[0].upper() != "Z"]
+        }
+        
         args_list = []
         for word1 in tqdm(word_list, desc="Preparing Arguments for Parallel Processing", unit="word"):
+            filtered_words = filter_word_list.get(word1[0].upper(), [])
             word1_pron = p_dict[word1][0]
-            filtered_words = [w for w in word_list if w[0].upper() != word1[0].upper()]
             args_list.append((word1, word1_pron, filtered_words, p_dict, p_distance_dict))
 
         log_console_header("Starting Parallel Processing of Word Distances (this might take a minute)...")
@@ -420,17 +451,21 @@ def get_phoneme_distance_dict():
     distance = defaultdict(float)
     for i, p1 in enumerate(phonemes):
         coord1 = PHONEME_COORDINATES[p1]
-        distance[(p1, "")] = distance[("", p1)] = math.sqrt(sum(a ** 2 for a in coord1))
+        distance[(p1, "")] = math.sqrt(sum(a ** 2 for a in coord1))
+        distance[("", p1)] = math.sqrt(sum(a ** 2 for a in coord1))
         distance[(p1, p1)] = 0.0
         
         for j, p2 in enumerate(phonemes):
             if i < j:  # Avoid duplicate pairs
                 coord2 = PHONEME_COORDINATES[p2]
-                distance[(p1, p2)] = distance[(p2, p1)] = math.sqrt(sum((a - b) ** 2 for a, b in zip(coord1, coord2)))
+                distance[(p1, p2)] = math.sqrt(sum((a - b) ** 2 for a, b in zip(coord1, coord2)))
+                distance[(p2, p1)] = math.sqrt(sum((a - b) ** 2 for a, b in zip(coord1, coord2)))
                 
     logging.info("Phoneme Distance Dictionary Created | Total Phonemes: %d", len(PHONEME_COORDINATES))
+    
     # Print out the phoneme distance dictionary
-    logging.debug("Phoneme Distance Dictionary: %s", distance)
+    #logging.debug("Phoneme Distance Dictionary: %s", distance)
+    
     # Save the phoneme distance dictionary to a file
     with open("phoneme_distance_dict.csv", "w", newline="") as f:
         writer = csv.writer(f)
@@ -494,10 +529,11 @@ def get_cleaned_cmu_dict():
 
     return cleaned_dict
 
-# -----------------------------
-# 🚀 MAIN LOGIC
-# -----------------------------
+# -------------------------------
+# UTILITY FUNCTIONS
+# -------------------------------
 
+# Log a header message to the console
 def log_console_header(message, data=None):
     logging.info("--------------------------------")
     if data:
@@ -505,6 +541,18 @@ def log_console_header(message, data=None):
     else:
         logging.info(message)
     logging.info("--------------------------------")
+
+# Log the best scores and words in a formatted way
+def log_scores(score, list_name, words):
+    logging.info("--------------------------------")
+    logging.info("Best %s Set (%.6f):", list_name, score)
+    logging.info("--------------------------------")
+    for word in words:
+        logging.info("%-12s  ->  %s", word.capitalize(), ' '.join(PHONEME_DICT[word][0]))
+
+# -----------------------------
+# 🚀 MAIN LOGIC
+# -----------------------------
 
 def main():
 
@@ -514,13 +562,12 @@ def main():
     nltk.download('cmudict')
     nltk.download("wordnet")
 
-
+    PHONEME_DISTANCE_DICT = get_phoneme_distance_dict()
     PHONEME_DICT = get_cleaned_cmu_dict()
 
 # --------------------------------
 # Print out Stats for Dictionary
 # --------------------------------
-
     log_console_header("Total Words in Dictionary", len(PHONEME_DICT)) 
     
     WORDS_BY_LETTER = defaultdict(list)
@@ -547,27 +594,14 @@ def main():
 # Calculate word averages
 # --------------------------------
 
-    # Write the word averages to a CSV file
-    
     # Ask user if they want to calculate word averages
     calculate_averages = input("Calculate word averages? (y/n, default 'y'): ").strip().lower() or 'y'
     if calculate_averages == 'y':
         log_console_header("Calculating Word Averages")
-        write_word_averages(PHONEME_DICT, get_phoneme_distance_dict())
+        write_word_averages(PHONEME_DICT, PHONEME_DISTANCE_DICT)
 
     log_console_header("Beginning Best Set Search")
-    # Ask user how many trials to run
-    TRIALS = int(input("Enter the number of trials to run (default 100000): ") or "100000")
-    TRIALS = max(TRIALS, 1)  # Ensure at least one trial
-
-    best_scores, best_set, best_levenshtein, best_phoneme, best_shared = find_best_set_randomized(trials=TRIALS)
-
-    def log_scores(score, list_name, words):
-        logging.info("--------------------------------")
-        logging.info("Best %s Set (%.6f):", list_name, score)
-        logging.info("--------------------------------")
-        for word in words:
-            logging.info("%-12s  ->  %s", word.capitalize(), ' '.join(PHONEME_DICT[word][0]))
+    best_scores, best_set, best_levenshtein, best_phoneme, best_shared = find_best_set_randomized(TRIALS)
 
     # Log best levenshtein set
     log_scores(best_scores['best levenshtein'], "Levenshtein Distance", best_levenshtein)
