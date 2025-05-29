@@ -185,6 +185,10 @@ WORDS_BY_LETTER = defaultdict(list)
 # 📦 FUNCTION DEFINITIONS
 # -----------------------------
 
+# --------------------------------
+# Calculation Functions
+# --------------------------------
+
 # Calculate Levenshtein distance between two words.
 def levenshtein_distance(w1, w2):
     return editdistance.eval(w1, w2)
@@ -244,6 +248,10 @@ def total_phoneme_distance(word_set, sequence=False, p_dict=PHONEME_DICT, p_dist
     func = phoneme_distance if not sequence else shared_phoneme_sequences
     distances = [func(p_dict[w1][0], p_dict[w2][0], p_distance_dict) for w1, w2 in pairs]
     return sum(distances)
+
+# -------------------------------
+# Big Chunky Functions
+# -------------------------------
 
 # Helper function for scoring a candidate (no parallel processing).
 def _score_candidate(candidate, p_dict=PHONEME_DICT, p_distance_dict=PHONEME_DISTANCE_DICT):
@@ -333,13 +341,9 @@ def _word1_distances(args):
 
 # Calculate and write word averages to a CSV file.
 def write_word_averages(p_dict, p_distance_dict):
-    if os.path.exists("word_score_averages.csv"):
-        overwrite = input("File 'word_score_averages.csv' already exists. Recalculate and overwrite? (y/n): ").strip().lower()
-        if overwrite != 'y':
-            log_console_header("Exiting without overwriting the file.")
-            return
-        else:
-            os.remove("word_score_averages.csv")
+
+    if not check_file_overwrite("word_score_averages.csv"):
+        return
     
     # Filter Word lists excluding words starting with each letter
     word_list = list(p_dict.keys())
@@ -402,6 +406,64 @@ def write_word_averages(p_dict, p_distance_dict):
             )
 
     log_console_header("Word Averages Written to 'word_score_averages.csv'")
+
+def write_levenshtein_matrix(p_dict):
+
+    if not check_file_overwrite("levenshtein_matrix.csv"):
+        return
+    
+    words = list(p_dict.keys())
+    with open("levenshtein_matrix.csv", "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["Word 1", "Word 2", "Levenshtein Distance"])
+        
+        for i in tqdm(range(len(words)), desc="Calculating Levenshtein Distance Matrix", unit="word"):
+            for j in range(i + 1, len(words)):
+                w1, w2 = words[i], words[j]
+                distance = levenshtein_distance(w1, w2)
+                writer.writerow([w1, w2, distance])
+    
+    log_console_header("Levenshtein Matrix Written to 'levenshtein_matrix.csv'")
+
+def write_phoneme_distance_matrix(p_dict, p_distance_dict):
+
+    if not check_file_overwrite("phoneme_distance_matrix.csv"):
+        return
+    
+    words = list(p_dict.keys())
+    with open("phoneme_distance_matrix.csv", "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["Word 1", "Word 2", "Phoneme Distance"])
+        
+        for i in tqdm(range(len(words)), desc="Calculating Phoneme Distance Matrix", unit="word"):
+            for j in range(i + 1, len(words)):
+                w1, w2 = words[i], words[j]
+                distance = phoneme_distance(p_dict[w1][0], p_dict[w2][0], p_distance_dict)
+                writer.writerow([w1, w2, distance])
+    
+    log_console_header("Phoneme Distance Matrix Written to 'phoneme_distance_matrix.csv'")
+
+def write_shared_phoneme_matrix(p_dict, p_distance_dict):
+
+    if not check_file_overwrite("shared_phoneme_matrix.csv"):
+        return
+
+    words = list(p_dict.keys())
+    with open("shared_phoneme_matrix.csv", "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["Word 1", "Word 2", "Shared Phoneme Sequence Count"])
+        
+        for i in tqdm(range(len(words)), desc="Calculating Shared Phoneme Sequence Matrix", unit="word"):
+            for j in range(i + 1, len(words)):
+                w1, w2 = words[i], words[j]
+                count = shared_phoneme_sequences(p_dict[w1][0], p_dict[w2][0], p_distance_dict)
+                writer.writerow([w1, w2, count])
+    
+    log_console_header("Shared Phoneme Sequence Matrix Written to 'shared_phoneme_matrix.csv'")
+
+# -------------------------------
+# Dictionary Functions
+# -------------------------------
 
 # Compare every phoneme coordinate with every other, as well as itself and an empty string
 def get_phoneme_distance_dict():
@@ -509,6 +571,18 @@ def log_scores(score, list_name, words, p_dict):
     for word in words:
         logging.info("%-12s  ->  %s", word.capitalize(), ' '.join(p_dict[word][0]))
 
+# Check if the file already exists and ask for overwrite permission
+# If the user does not want to overwrite, exit the function
+def check_file_overwrite(filename):
+    if os.path.exists(filename):
+        overwrite = input(f"File '{filename}' already exists. Recalculate and overwrite? (y/n): ").strip().lower()
+        if overwrite != 'y':
+            log_console_header("Exiting without overwriting the file.")
+            return False
+        else:
+            os.remove(filename)
+    return True
+
 # -----------------------------
 # 🚀 MAIN LOGIC
 # -----------------------------
@@ -558,6 +632,10 @@ def main():
     if calculate_averages == 'y':
         log_console_header("Calculating Word Averages")
         write_word_averages(PHONEME_DICT, PHONEME_DISTANCE_DICT)
+
+    write_levenshtein_matrix(PHONEME_DICT)
+    write_phoneme_distance_matrix(PHONEME_DICT, PHONEME_DISTANCE_DICT)
+    write_shared_phoneme_matrix(PHONEME_DICT, PHONEME_DISTANCE_DICT)
 
     log_console_header("Beginning Best Set Search")
     best_scores, best_set, best_levenshtein, best_phoneme, best_shared = find_best_set_randomized(PHONEME_DICT, PHONEME_DISTANCE_DICT, WORDS_BY_LETTER, TRIALS)
