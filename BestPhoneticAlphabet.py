@@ -180,7 +180,7 @@ PHONEME_COORDINATES = {
 PHONEME_DICT = defaultdict(list)
 PHONEME_DISTANCE_DICT = {}
 WORDS_BY_LETTER = defaultdict(list)
-
+SHOW_DICTIONARY_STATS = False       # Set to 'True' to show stats about the dictionary after cleanup
 # -----------------------------
 # 📦 FUNCTION DEFINITIONS
 # -----------------------------
@@ -407,57 +407,46 @@ def write_word_averages(p_dict, p_distance_dict):
 
     log_console_header("Word Averages Written to 'word_score_averages.csv'")
 
-def write_levenshtein_matrix(p_dict):
-
+def write_levenshtein_matrix(pairs):
     if not check_file_overwrite("levenshtein_matrix.csv"):
         return
-    
-    words = list(p_dict.keys())
+
     with open("levenshtein_matrix.csv", "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["Word 1", "Word 2", "Levenshtein Distance"])
-        
-        for i in tqdm(range(len(words)), desc="Calculating Levenshtein Distance Matrix", unit="word"):
-            for j in range(i + 1, len(words)):
-                w1, w2 = words[i], words[j]
-                distance = levenshtein_distance(w1, w2)
-                writer.writerow([w1, w2, distance])
-    
+        for w1, w2 in tqdm(pairs, desc="Calculating Levenshtein Distance Matrix", unit="pair"):
+            distance = levenshtein_distance(w1, w2)
+            writer.writerow([w1, w2, distance])
+
     log_console_header("Levenshtein Matrix Written to 'levenshtein_matrix.csv'")
 
-def write_phoneme_distance_matrix(p_dict, p_distance_dict):
-
+def write_phoneme_distance_matrix(pairs, p_dict, p_distance_dict):
     if not check_file_overwrite("phoneme_distance_matrix.csv"):
         return
     
-    words = list(p_dict.keys())
     with open("phoneme_distance_matrix.csv", "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["Word 1", "Word 2", "Phoneme Distance"])
-        
-        for i in tqdm(range(len(words)), desc="Calculating Phoneme Distance Matrix", unit="word"):
-            for j in range(i + 1, len(words)):
-                w1, w2 = words[i], words[j]
-                distance = phoneme_distance(p_dict[w1][0], p_dict[w2][0], p_distance_dict)
-                writer.writerow([w1, w2, distance])
+        for w1, w2 in tqdm(pairs, desc="Calculating Phoneme Distance Matrix", unit="pair"):
+            p1 = p_dict[w1][0]
+            p2 = p_dict[w2][0]
+            distance = phoneme_distance(p1, p2, p_distance_dict)
+            writer.writerow([w1, w2, distance])
     
     log_console_header("Phoneme Distance Matrix Written to 'phoneme_distance_matrix.csv'")
 
-def write_shared_phoneme_matrix(p_dict, p_distance_dict):
-
+def write_shared_phoneme_matrix(pairs, p_dict, p_distance_dict):
     if not check_file_overwrite("shared_phoneme_matrix.csv"):
         return
 
-    words = list(p_dict.keys())
     with open("shared_phoneme_matrix.csv", "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["Word 1", "Word 2", "Shared Phoneme Sequence Count"])
-        
-        for i in tqdm(range(len(words)), desc="Calculating Shared Phoneme Sequence Matrix", unit="word"):
-            for j in range(i + 1, len(words)):
-                w1, w2 = words[i], words[j]
-                count = shared_phoneme_sequences(p_dict[w1][0], p_dict[w2][0], p_distance_dict)
-                writer.writerow([w1, w2, count])
+        for w1, w2 in tqdm(pairs, desc="Calculating Shared Phoneme Sequence Matrix", unit="pair"):
+            p1 = p_dict[w1][0]
+            p2 = p_dict[w2][0]
+            shared_count = shared_phoneme_sequences(p1, p2, p_distance_dict)
+            writer.writerow([w1, w2, shared_count])
     
     log_console_header("Shared Phoneme Sequence Matrix Written to 'shared_phoneme_matrix.csv'")
 
@@ -597,46 +586,60 @@ def main():
 
     PHONEME_DISTANCE_DICT = get_phoneme_distance_dict()
     PHONEME_DICT = get_cleaned_cmu_dict()
+    log_console_header("Total Words in Dictionary", len(PHONEME_DICT)) 
 
 # --------------------------------
 # Print out Stats for Dictionary
 # --------------------------------
-    log_console_header("Total Words in Dictionary", len(PHONEME_DICT)) 
     
-    WORDS_BY_LETTER = defaultdict(list)
-    phoneme_count = defaultdict(int)
-    letter_count = defaultdict(int)
-    for word in PHONEME_DICT.keys():
-        WORDS_BY_LETTER[word[0].upper()].append(word)
-        phoneme_count[len(PHONEME_DICT[word][0])] += 1
-        letter_count[len(word)] += 1   
+    if SHOW_DICTIONARY_STATS:
+        WORDS_BY_LETTER = defaultdict(list)
+        phoneme_count = defaultdict(int)
+        letter_count = defaultdict(int)
+        for word in PHONEME_DICT.keys():
+            WORDS_BY_LETTER[word[0].upper()].append(word)
+            phoneme_count[len(PHONEME_DICT[word][0])] += 1
+            letter_count[len(word)] += 1   
 
-    log_console_header("Words by Letter") 
-    for letter in sorted(WORDS_BY_LETTER.keys()):
-        logging.info("%s: %d words", letter, len(WORDS_BY_LETTER[letter]))
+        log_console_header("Words by Letter") 
+        for letter in sorted(WORDS_BY_LETTER.keys()):
+            logging.info("%s: %d words", letter, len(WORDS_BY_LETTER[letter]))
 
-    log_console_header("Words by Phoneme Count")
-    for count, num_words in sorted(phoneme_count.items()):
-        logging.info("%d phonemes: %d words", count, num_words)
+        log_console_header("Words by Phoneme Count")
+        for count, num_words in sorted(phoneme_count.items()):
+            logging.info("%d phonemes: %d words", count, num_words)
 
-    log_console_header("Words by Letter Count")
-    for count, num_words in sorted(letter_count.items()):
-        logging.info("%d letters: %d words", count, num_words)
+        log_console_header("Words by Letter Count")
+        for count, num_words in sorted(letter_count.items()):
+            logging.info("%d letters: %d words", count, num_words)
     
 # --------------------------------    
 # Calculate word averages
 # --------------------------------
 
     # Ask user if they want to calculate word averages
-    calculate_averages = input("Calculate word averages? (y/n, default 'y'): ").strip().lower() or 'y'
-    if calculate_averages == 'y':
-        log_console_header("Calculating Word Averages")
-        write_word_averages(PHONEME_DICT, PHONEME_DISTANCE_DICT)
+    #log_console_header("Calculating Word Averages")
+    #write_word_averages(PHONEME_DICT, PHONEME_DISTANCE_DICT)
 
-    write_levenshtein_matrix(PHONEME_DICT)
-    write_phoneme_distance_matrix(PHONEME_DICT, PHONEME_DISTANCE_DICT)
-    write_shared_phoneme_matrix(PHONEME_DICT, PHONEME_DISTANCE_DICT)
+    
+    # Ask user if they want to calculate the matrices
+    logging.info("Calculate and Write the Levenshtein Distance, Phoneme Distance, and Shared Sequence Count Matrices to Files? (y/n)")
+    logging.info("---NOTE: This will take a while---")
+    calculate_matrices = input().strip().lower() == 'y'
+    if not calculate_matrices:
+        log_console_header("Skipping Matrix Calculations")
+        return
+    else:
+        log_console_header("Calculating Matrices and Writing to Files")  
+        
+        words = list(PHONEME_DICT.keys())
+        word_pairs = [(words[i], words[j]) for i in tqdm(range(len(words)), total = len(words), desc = "Preparing Word Pairs", unit = "pair") for j in range(i + 1, len(words))]
+        
+        write_levenshtein_matrix(word_pairs)
+        write_phoneme_distance_matrix(word_pairs, PHONEME_DICT, PHONEME_DISTANCE_DICT)
+        write_shared_phoneme_matrix(word_pairs, PHONEME_DICT, PHONEME_DISTANCE_DICT)
 
+'''
     log_console_header("Beginning Best Set Search")
     best_scores, best_set, best_levenshtein, best_phoneme, best_shared = find_best_set_randomized(PHONEME_DICT, PHONEME_DISTANCE_DICT, WORDS_BY_LETTER, TRIALS)
 
@@ -648,6 +651,7 @@ def main():
     log_scores(best_scores['best shared'], "Shared Phoneme Sequence Count", best_shared,PHONEME_DICT)
     # Log best overall set
     log_scores(best_scores['score'], "Overall", best_set,PHONEME_DICT)
+'''
 
 if __name__ == "__main__":
     main()
