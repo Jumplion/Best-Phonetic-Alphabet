@@ -440,7 +440,12 @@ def write_distance_matrix(pairs, p_dict, p_distance_dict, words_by_letters, matr
 
     letters = list(string.ascii_uppercase)
     letter_pairs = [(l1, l2) for l1 in letters for l2 in letters]
-    for l1, l2 in tqdm(letter_pairs, total = len(letter_pairs), desc="{matrix_type}: {l1}_{l2}...", unit=" letter pairs"):
+    for l1, l2 in tqdm(letter_pairs, total = len(letter_pairs), desc="{matrix_type}: [Letter]_[Letter]...", unit=" letter pairs"):
+        
+        filename = os.path.join(base_dir, filename_template.format(l1, l2))
+        if(os.path.exists(filename)):
+            continue
+        
         word_list1 = words_by_letters[l1]
         word_list2 = words_by_letters[l2]
 
@@ -450,7 +455,6 @@ def write_distance_matrix(pairs, p_dict, p_distance_dict, words_by_letters, matr
                 distance = distance_func(w1, w2)
                 letter_pair_results.append((w1, w2, distance))
 
-        filename = os.path.join(base_dir, filename_template.format(l1, l2))
         with open(filename, "w", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(header)
@@ -636,27 +640,30 @@ def plot_graph():
     plot.save("levenshtein_graph_" + time.strftime("%Y%m%d_%H%M%S") + ".png",)  # Save to file
 
 def plot_a_word_levenshtein_bargraph():
-    averages = []
-    letters = []
-    for letter in tqdm(string.ascii_uppercase, total = 26, desc="Calculating A-Word Distances", unit=" letter"):
-        filename = f"CSV Files/Levenshtein Distance Matrices/levenshtein_matrix_A_{letter}.csv"  
-        distances = []
-        with open(filename, newline="") as f:
-            reader = csv.reader(f)
-            next(reader)  # skip header
-            for row in reader:
-                _, _, dist = row
-                distances.append(float(dist))
-        if distances:
-            avg = np.mean(distances)
-            averages.append(avg)
-            letters.append(letter)
+    averages = defaultdict(list)
+    for l1 in tqdm(string.ascii_uppercase, total = 26, desc="Calculating Word Distances", unit=" letter"):
+        for l2 in tqdm(string.ascii_uppercase, total = 26, desc="Calculating -Word Distances", unit=" letter"):
+            filename = f"CSV Files/Levenshtein Distance Matrices/levenshtein_matrix_{l1}_{l2}.csv"  
+            distances = []
+            with open(filename, newline="") as f:
+                reader = csv.reader(f)
+                next(reader)  # skip header
+                for row in reader:
+                    _, _, dist = row
+                    distances.append(float(dist))
+            if distances:
+                averages[l1].append(np.mean(distances))
+    
+    letter = list(string.ascii_uppercase)
 
     plt.figure(figsize=(12, 6))
-    plt.bar(letters, averages, color='skyblue')
+    
+    for l in letter:
+        plt.bar(l, averages[l], color='skyblue')
+
     plt.xlabel("Target Letter")
     plt.ylabel("Average Levenshtein Distance (A-words vs. X-words)")
-    plt.title("Average Levenshtein Distance: A-Words vs. Other Letters")
+    plt.title("Average Levenshtein Distance: [X]-Letter vs. [Y]-Letter Words")
     plt.tight_layout()
     plt.grid(axis='y', linestyle='--', alpha=0.7)
     plt.xticks(rotation=45)
@@ -669,45 +676,44 @@ def plot_a_word_levenshtein_bargraph():
 # -----------------------------
 
 def main():
+    '''
+        log_console_header("Starting Best Phonetic Alphabet Search")
+        # Load NLTK resources
+        #nltk.download('cmudict')
+        #nltk.download("wordnet")
 
-    log_console_header("Starting Best Phonetic Alphabet Search")
+        #PHONEME_DISTANCE_DICT = get_phoneme_distance_dict()
+        #PHONEME_DICT = get_cleaned_cmu_dict()
+        #log_console_header("Total Words in Dictionary", len(PHONEME_DICT)) 
 
-    # Load NLTK resources
-    nltk.download('cmudict')
-    nltk.download("wordnet")
+    # --------------------------------
+    # Print out Stats for Dictionary
+    # --------------------------------
+        
+        WORDS_BY_LETTER = defaultdict(list)
+        phoneme_count = defaultdict(int)
+        letter_count = defaultdict(int)
+        for word in PHONEME_DICT.keys():
+            WORDS_BY_LETTER[word[0].upper()].append(word)
+            phoneme_count[len(PHONEME_DICT[word][0])] += 1
+            letter_count[len(word)] += 1   
 
-    PHONEME_DISTANCE_DICT = get_phoneme_distance_dict()
-    PHONEME_DICT = get_cleaned_cmu_dict()
-    log_console_header("Total Words in Dictionary", len(PHONEME_DICT)) 
+        if SHOW_DICTIONARY_STATS:
+            log_console_header("Words by Letter") 
+            for letter in sorted(WORDS_BY_LETTER.keys()):
+                logging.info("%s: %d words", letter, len(WORDS_BY_LETTER[letter]))
 
-# --------------------------------
-# Print out Stats for Dictionary
-# --------------------------------
-    
-    WORDS_BY_LETTER = defaultdict(list)
-    phoneme_count = defaultdict(int)
-    letter_count = defaultdict(int)
-    for word in PHONEME_DICT.keys():
-        WORDS_BY_LETTER[word[0].upper()].append(word)
-        phoneme_count[len(PHONEME_DICT[word][0])] += 1
-        letter_count[len(word)] += 1   
+            log_console_header("Words by Phoneme Count")
+            for count, num_words in sorted(phoneme_count.items()):
+                logging.info("%d phonemes: %d words", count, num_words)
 
-    if SHOW_DICTIONARY_STATS:
-        log_console_header("Words by Letter") 
-        for letter in sorted(WORDS_BY_LETTER.keys()):
-            logging.info("%s: %d words", letter, len(WORDS_BY_LETTER[letter]))
-
-        log_console_header("Words by Phoneme Count")
-        for count, num_words in sorted(phoneme_count.items()):
-            logging.info("%d phonemes: %d words", count, num_words)
-
-        log_console_header("Words by Letter Count")
-        for count, num_words in sorted(letter_count.items()):
-            logging.info("%d letters: %d words", count, num_words)
-    
-# --------------------------------    
-# Calculate word averages
-# --------------------------------
+            log_console_header("Words by Letter Count")
+            for count, num_words in sorted(letter_count.items()):
+                logging.info("%d letters: %d words", count, num_words)
+    # --------------------------------    
+    # Calculate word averages
+    # --------------------------------
+    ''' 
 
     log_console_header("Plotting Graph of Levenshtein Distances")
     #plot_graph()
@@ -731,8 +737,8 @@ def main():
         word_pairs = [] #[(words[i], words[j]) for i in tqdm(range(len(words)), total = len(words), desc = "Preparing Word Pairs", unit = "pair") for j in range(i + 1, len(words))]
         
         write_distance_matrix(word_pairs, PHONEME_DICT, PHONEME_DISTANCE_DICT, WORDS_BY_LETTER, "levenshtein")
-        write_distance_matrix(word_pairs, PHONEME_DICT, PHONEME_DISTANCE_DICT, WORDS_BY_LETTER, "phoneme")
-        write_distance_matrix(word_pairs, PHONEME_DICT, PHONEME_DISTANCE_DICT, WORDS_BY_LETTER, "shared")
+        #write_distance_matrix(word_pairs, PHONEME_DICT, PHONEME_DISTANCE_DICT, WORDS_BY_LETTER, "phoneme")
+        #write_distance_matrix(word_pairs, PHONEME_DICT, PHONEME_DISTANCE_DICT, WORDS_BY_LETTER, "shared")
 
         log_console_header("Matrices Calculated and Written to Files")
     log_console_header("Beginning Best Set Search")
