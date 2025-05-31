@@ -460,6 +460,7 @@ def write_distance_matrix(pairs, p_dict, p_distance_dict, words_by_letters, matr
             writer.writerow(header)
             for w1, w2, distance in letter_pair_results:
                 writer.writerow([w1, w2, distance])
+
 # -------------------------------
 # Dictionary Functions
 # -------------------------------
@@ -582,7 +583,6 @@ def check_file_overwrite(filename):
             os.remove(filename)
     return True
 
-
 # --------------------------------
 # Graphing Functions
 # --------------------------------
@@ -640,36 +640,68 @@ def plot_graph():
     plot.save("levenshtein_graph_" + time.strftime("%Y%m%d_%H%M%S") + ".png",)  # Save to file
 
 def plot_a_word_levenshtein_bargraph():
-    averages = defaultdict(list)
-    for l1 in tqdm(string.ascii_uppercase, total = 26, desc="Calculating Word Distances", unit=" letter"):
-        for l2 in tqdm(string.ascii_uppercase, total = 26, desc="Calculating -Word Distances", unit=" letter"):
-            filename = f"CSV Files/Levenshtein Distance Matrices/levenshtein_matrix_{l1}_{l2}.csv"  
-            distances = []
-            with open(filename, newline="") as f:
-                reader = csv.reader(f)
-                next(reader)  # skip header
-                for row in reader:
-                    _, _, dist = row
-                    distances.append(float(dist))
-            if distances:
-                averages[l1].append(np.mean(distances))
     
-    letter = list(string.ascii_uppercase)
-
-    plt.figure(figsize=(12, 6))
+    letters = sorted(string.ascii_uppercase)
+    averages = {l: [] for l in letters}
     
-    for l in letter:
-        plt.bar(l, averages[l], color='skyblue')
+    if os.path.exists("CSV Files/Levenshtein Distance Matrices/levenshtein_averages.csv"):
+        averages = defaultdict(list)
+        with open("CSV Files/Levenshtein Distance Matrices/levenshtein_averages.csv", newline="") as avg_file:
+            avg_reader = csv.reader(avg_file)
+            next(avg_reader)
+            for row in avg_reader:
+                target_letter, compared_letter, avg_distance = row
+                averages[target_letter].append(float(avg_distance))
+                    
+    # If the averages file does not exist, calculate the averages
+    else:
+        with open("CSV Files/Levenshtein Distance Matrices/levenshtein_averages.csv", "w", newline="") as avg_file:
+            avg_writer = csv.writer(avg_file)
+            avg_writer.writerow(["Target Letter", "Compared Letter", "Average Levenshtein Distance"])
 
-    plt.xlabel("Target Letter")
-    plt.ylabel("Average Levenshtein Distance (A-words vs. X-words)")
-    plt.title("Average Levenshtein Distance: [X]-Letter vs. [Y]-Letter Words")
-    plt.tight_layout()
-    plt.grid(axis='y', linestyle='--', alpha=0.7)
-    plt.xticks(rotation=45)
-    plt.savefig("levenshtein_bargraph_A_vs_others.png")
+        for l1 in string.ascii_uppercase:
+            for l2 in tqdm(string.ascii_uppercase, total = 26, desc=f"Calculating {l1}-Word Distances", unit=" letter"):
+                filename = f"CSV Files/Levenshtein Distance Matrices/levenshtein_matrix_{l1}_{l2}.csv"  
+                distances = []
+                with open(filename, newline="") as f:
+                    reader = csv.reader(f)
+                    next(reader)  # skip header
+                    for row in reader:
+                        _, _, dist = row
+                        distances.append(float(dist))
+
+                    if distances:
+                        averages[l1].append(np.mean(distances))
+
+                    # Write the average to a file
+                    with open("CSV Files/Levenshtein Distance Matrices/levenshtein_averages.csv", "a", newline="") as avg_file:
+                        avg_writer = csv.writer(avg_file)
+                        avg_writer.writerow([l1, l2, np.mean(distances) if distances else 0.0])
+
+    x_labels = np.arange(len(letters))
+    width = 1.0/(52.0)
+    multiplier = 0.0
+    
+    fig, ax = plt.subplots(layout = "constrained")
+    
+    for attr, mean in averages.items():
+        offset = width * multiplier
+        rects = ax.bar(x_labels + offset, mean, width=width, label=f"[{attr}]", color=matplotlib.cm.tab20(multiplier / 26.0))
+        ax.bar_label(rects, padding=2, fmt='%.4f', fontsize=6, color='black', rotation=90, label_type='edge')
+        multiplier += 1.0
+    
+    ax.set_title("Average Levenshtein Distance: [A]-Letter vs. [X]-Letter Words")
+    ax.set_xlabel("Target Letter")
+    ax.set_ylabel("Average Levenshtein Distance")
+    
+    ax.set_xticks(x_labels + width, letters)
+    ax.set_xticklabels(letters, rotation=45)
+    ax.set_ylim(min(min(averages[l]) for l in letters) - 0.05, max(max(averages[l]) for l in letters) + 0.25)
+    ax.legend(loc='lower left', ncols=7, title="Target Letter")
+    
+    #plt.tight_layout()
+    plt.savefig("levenshtein_bargraph.png")
     plt.show()
-
 
 # -----------------------------
 # 🚀 MAIN LOGIC

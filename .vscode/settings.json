@@ -9,6 +9,7 @@
         "csvfile",
         "figsize",
         "fillvalue",
+        "fontsize",
         "igraph",
         "imread",
         "imshow",
@@ -19,15 +20,19 @@
         "Lemmatizing",
         "levelname",
         "linestyle",
+        "ncols",
         "postalveolar",
         "prons",
+        "rects",
         "rhotic",
         "skyblue",
         "subarrays",
         "synsets",
         "wordnet",
         "xlabel",
+        "xticklabels",
         "xticks",
-        "ylabel"
+        "ylabel",
+        "ylim"
     ]
 }
