@@ -4,6 +4,7 @@ import math
 import random
 import logging
 import itertools
+import string
 import time
 import igraph as ig
 import matplotlib, matplotlib.pyplot as plt
@@ -410,26 +411,20 @@ def write_word_averages(p_dict, p_distance_dict):
 
     log_console_header("Word Averages Written to 'word_score_averages.csv'")
 
-def write_distance_matrix(pairs, p_dict, p_distance_dict, matrix_type):
-    filename = {
-        "levenshtein": "levenshtein_matrix.csv",
-        "phoneme": "phoneme_distance_matrix.csv",
-        "shared": "shared_phoneme_matrix.csv"
-    }[matrix_type]
+def write_distance_matrix(pairs, p_dict, p_distance_dict, words_by_letters, matrix_type):
+    base_dir = os.path.join("CSV Files", matrix_type.capitalize() + " Distance Matrices")
+    os.makedirs(base_dir, exist_ok=True)
     
-    if not check_file_overwrite(filename):
-        return
+    filename_template = {
+        "levenshtein": "levenshtein_matrix_{0}_{1}.csv",
+        "phoneme": "phoneme_distance_matrix_{0}_{1}.csv",
+        "shared": "shared_phoneme_matrix_{0}_{1}.csv"
+    }[matrix_type]
 
     header = {
         "levenshtein": ["Word 1", "Word 2", "Levenshtein Distance"],
         "phoneme": ["Word 1", "Word 2", "Phoneme Distance"],
         "shared": ["Word 1", "Word 2", "Shared Phoneme Sequence Count"]
-    }[matrix_type]
-
-    desc = {
-        "levenshtein": "Calculating Levenshtein Distance Matrix",
-        "phoneme": "Calculating Phoneme Distance Matrix",
-        "shared": "Calculating Shared Phoneme Sequence Matrix"
     }[matrix_type]
     
     def distance_func(w1, w2):
@@ -443,13 +438,20 @@ def write_distance_matrix(pairs, p_dict, p_distance_dict, matrix_type):
             raise ValueError("Unknown matrix_type: " + matrix_type)
         return distance
 
-    with open(filename, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(header)
-        for w1, w2 in tqdm(pairs, desc=desc, unit="pair"):
-            distance = distance_func(w1, w2)
-            writer.writerow([w1, w2, distance])
+    letters = list(string.ascii_uppercase)
+    for l1 in tqdm(letters, desc="{matrix_type}: A_...", unit=" letter"):
+        for l2 in letters:
+            word_list1 = words_by_letters[l1]
+            word_list2 = words_by_letters[l2]
+            filename = os.path.join(base_dir, filename_template.format(l1, l2))
 
+            with open(filename, "w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(header)
+                for w1 in tqdm(word_list1, desc=f"{l1}_{l2}: {matrix_type}"):
+                    for w2 in word_list2:
+                        distance = distance_func(w1, w2)
+                        writer.writerow([w1, w2, distance])
 # -------------------------------
 # Dictionary Functions
 # -------------------------------
@@ -577,8 +579,9 @@ def check_file_overwrite(filename):
 # Graphing Functions
 # --------------------------------
 
-def plot_graph(p_dict):
+def plot_graph():
     # --- Load the distance matrix ---
+    word_list = set()
     edges = []
     with open("levenshtein_matrix.csv", newline="") as f:
         reader = csv.reader(f)
@@ -587,40 +590,42 @@ def plot_graph(p_dict):
             w1, w2, dist = row
             dist = float(dist)
             edges.append((w1, w2, dist))
+            word_list.add(w1)
+            word_list.add(w2)
             
-            if len(edges) > 10000:
+            if len(edges) > 100:
                 break
 
     # --- Build the graph ---
-    word_list = sorted(p_dict.keys())
+    
     word_to_idx = {w: i for i, w in enumerate(word_list)}
     g = ig.Graph()
     g.add_vertices(word_list)
-    g.add_edges([(word_to_idx[w1], word_to_idx[w2]) for w1, w2, _ in tqdm(edges, desc="Adding Edges", unit="edge")])
+    g.add_edges([(word_to_idx[w1], word_to_idx[w2]) for w1, w2, _ in tqdm(edges, desc="Adding Edges", unit=" edge")])
     g.es['weight'] = [dist for _, _, dist in tqdm(edges, desc="Setting Edge Weights", unit="edge")]
 
     # --- Node colors by first letter ---
     letters = sorted(set(w[0].upper() for w in word_list))
     letter_to_color = {l: matplotlib.colors.rgb2hex(matplotlib.cm.tab20(i / len(letters))) for i, l in enumerate(letters)}
-    g.vs['color'] = [letter_to_color[w[0].upper()] for w in tqdm(word_list, desc="Assigning Node Colors", unit="node")]
+    g.vs['color'] = [letter_to_color[w[0].upper()] for w in tqdm(word_list, desc="Assigning Node Colors", unit=" node")]
 
     # --- Edge colors by distance (blue=close, red=far) ---
     weights = np.array(g.es['weight'])
     min_w, max_w = weights.min(), weights.max()
     norm = (weights - min_w) / (max_w - min_w + 1e-9)
-    edge_colors = [matplotlib.colors.rgb2hex(matplotlib.cm.coolwarm(1-n)) for n in tqdm(norm, desc="Assigning Edge Colors", unit="edge")]
+    edge_colors = [matplotlib.colors.rgb2hex(matplotlib.cm.coolwarm(1-n)) for n in tqdm(norm, desc="Assigning Edge Colors", unit=" edge")]
     g.es['color'] = edge_colors
 
     # --- Draw ---
     layout = g.layout("fr")
     visual_style = {
         "vertex_label": g.vs["name"],
-        "vertex_size": 3,
+        "vertex_size": 10,
         "edge_width": [1 + 2.0/(e['weight']+0.1) for e in g.es],
         "edge_color": g.es['color'],
         "vertex_color": g.vs['color'],
         "bbox": (25000, 25000),
-        "margin": 5,
+        "margin": 50,
     }
 
     plot = ig.plot(g, layout=layout, **visual_style)
@@ -646,15 +651,15 @@ def main():
 # Print out Stats for Dictionary
 # --------------------------------
     
-    if SHOW_DICTIONARY_STATS:
-        WORDS_BY_LETTER = defaultdict(list)
-        phoneme_count = defaultdict(int)
-        letter_count = defaultdict(int)
-        for word in PHONEME_DICT.keys():
-            WORDS_BY_LETTER[word[0].upper()].append(word)
-            phoneme_count[len(PHONEME_DICT[word][0])] += 1
-            letter_count[len(word)] += 1   
+    WORDS_BY_LETTER = defaultdict(list)
+    phoneme_count = defaultdict(int)
+    letter_count = defaultdict(int)
+    for word in PHONEME_DICT.keys():
+        WORDS_BY_LETTER[word[0].upper()].append(word)
+        phoneme_count[len(PHONEME_DICT[word][0])] += 1
+        letter_count[len(word)] += 1   
 
+    if SHOW_DICTIONARY_STATS:
         log_console_header("Words by Letter") 
         for letter in sorted(WORDS_BY_LETTER.keys()):
             logging.info("%s: %d words", letter, len(WORDS_BY_LETTER[letter]))
@@ -670,6 +675,9 @@ def main():
 # --------------------------------    
 # Calculate word averages
 # --------------------------------
+
+    #log_console_header("Plotting Graph of Levenshtein Distances")
+    #plot_graph()
 
     # Ask user if they want to calculate word averages
     #log_console_header("Calculating Word Averages")
@@ -687,15 +695,11 @@ def main():
         words = list(PHONEME_DICT.keys())
         word_pairs = [(words[i], words[j]) for i in tqdm(range(len(words)), total = len(words), desc = "Preparing Word Pairs", unit = "pair") for j in range(i + 1, len(words))]
         
-        write_distance_matrix(word_pairs, PHONEME_DICT, PHONEME_DISTANCE_DICT, "levenshtein")
-        write_distance_matrix(word_pairs, PHONEME_DICT, PHONEME_DISTANCE_DICT, "phoneme")
-        write_distance_matrix(word_pairs, PHONEME_DICT, PHONEME_DISTANCE_DICT, "shared")
+        write_distance_matrix(word_pairs, PHONEME_DICT, PHONEME_DISTANCE_DICT, WORDS_BY_LETTER, "levenshtein")
+        write_distance_matrix(word_pairs, PHONEME_DICT, PHONEME_DISTANCE_DICT, WORDS_BY_LETTER, "phoneme")
+        write_distance_matrix(word_pairs, PHONEME_DICT, PHONEME_DISTANCE_DICT, WORDS_BY_LETTER, "shared")
 
         log_console_header("Matrices Calculated and Written to Files")
-        
-    log_console_header("Plotting Graph of Levenshtein Distances")
-    plot_graph(PHONEME_DICT)
-
 '''
     log_console_header("Beginning Best Set Search")
     best_scores, best_set, best_levenshtein, best_phoneme, best_shared = find_best_set_randomized(PHONEME_DICT, PHONEME_DISTANCE_DICT, WORDS_BY_LETTER, TRIALS)
