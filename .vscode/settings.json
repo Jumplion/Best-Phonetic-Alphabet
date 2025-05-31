@@ -3,6 +3,7 @@
         "approximants",
         "arpabet",
         "backness",
+        "bargraph",
         "cmudict",
         "coolwarm",
         "csvfile",
@@ -17,11 +18,16 @@
         "lemmatizer",
         "Lemmatizing",
         "levelname",
+        "linestyle",
         "postalveolar",
         "prons",
         "rhotic",
+        "skyblue",
         "subarrays",
         "synsets",
-        "wordnet"
+        "wordnet",
+        "xlabel",
+        "xticks",
+        "ylabel"
     ]
 }
