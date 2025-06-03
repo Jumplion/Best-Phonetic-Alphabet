@@ -1,6 +1,23 @@
 # Best-Phonetic-Alphabet
 
-Welcome to Best-Phonetic-Alphabet! This guide provides detailed instructions for setting up the project on a **Windows** system using a virtual environment and installing dependencies from a `requirements.txt` file.
+We've all has that problem when spelling out something where the other person hears an "M" when you said "N". That's why we have the [NATO Phonetic Alphabet](https://en.wikipedia.org/wiki/NATO_phonetic_alphabet) (Alfa, Bravo, Charlie, etc...). The thing is, the words in said phonetic alphabet must be distinct enough that they can't get confused with eachother. After all, having "Bet", "Debt", "Let", "Net", "Met", and "Set" all in the same phonetic alphabet wouldn't be very useful.
+
+So this raises several question; what words would be best for a phonetic alphabet? Can we evaluate how good a set of words would be for a phonetic alphabet? 
+
+This is an ongoing experiment in trying to figure out what the "best" set of words might be for a Phonetic Alphabet.
+
+## Resources and Other Fun Things Referenced and Utilized
+
+#### Carnegie Mellon University (CMU) Pronouncing Dictionary
+* http://www.speech.cs.cmu.edu/cgi-bin/cmudict
+#### International Phonetic Association
+* https://www.internationalphoneticassociation.org/content/full-ipa-chart
+#### Interactive IPA Chart
+* https://www.ipachart.com/
+
+# Setting Up the Repo
+
+This guide provides detailed instructions for setting up the project on a **Windows** system using a virtual environment and installing dependencies from a `requirements.txt` file.
 
 ## Prerequisites
 
