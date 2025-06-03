@@ -343,7 +343,11 @@ def _word1_distances(args):
     magnitude = math.sqrt(sum(phoneme_distances.get((p, ""), 0) ** 2 for p in word1_pron))
     return magnitude, total_dist_levenshtein, total_dist_phoneme, total_shared, count
 
+# ---------------------------------
 # Calculate and write word averages to a CSV file.
+# This function calculates the average Levenshtein distance, phoneme distance,
+# and shared phoneme sequence count for each word, and writes the results to a CSV file.
+# ---------------------------------
 def write_word_averages(p_dict, p_distance_dict):
 
     if not check_file_overwrite("word_score_averages.csv"):
@@ -411,9 +415,16 @@ def write_word_averages(p_dict, p_distance_dict):
 
     log_console_header("Word Averages Written to 'word_score_averages.csv'")
 
+# --------------------------------
 # Write the distance matrix for a given type (levenshtein, phoneme, shared).
-# Creates a CSV file for each letter pair (e.g., A-B, A-C, etc.).
-# Creates a directory structure to store the matrices.
+# Creates a CSV file for each letter pair (e.g., A-B, A-C, etc.)
+# NOTE: This function does not create redundant letter pairs
+# - E.G., A-B and B-A are not created separately since they would be identical (just reversed).
+# Creates a directory structure "CSV Files/[matrix_type] Distance Matrices/" to store the csv files.
+# The average distances for each letter pair are also written to a separate file.
+# - E.G., "CSV Files/Levenshtein Distance Matrices/levenshtein_averages.csv"
+# @param p_dict: The phonetic dictionary mapping words to their phoneme sequences.
+# @param p_distance_dict: The phoneme distance dictionary mapping phoneme pairs to their distances.
 def write_distance_matrix(p_dict, p_distance_dict, words_by_letters, matrix_type):
     base_dir = os.path.join("CSV Files", matrix_type.capitalize() + " Distance Matrices")
     os.makedirs(base_dir, exist_ok=True)
@@ -443,13 +454,14 @@ def write_distance_matrix(p_dict, p_distance_dict, words_by_letters, matrix_type
     
     # Create the "Average" File to store the average distances for each letter pair
     avg_filename = f"{base_dir}/{matrix_type}_averages.csv"              # Write the average to a file
-    with open(avg_filename, "a", newline="") as avg_file:
+    with open(avg_filename, "w", newline="") as avg_file:
         avg_writer = csv.writer(avg_file)
         avg_writer.writerow(["Letter 1", "Letter 2", "Average Distance"])  # Write header for averages file
 
     letters = list(string.ascii_uppercase)
-    for l1 in tqdm(letters, total = len(letters), desc=f"{matrix_type}: Calculating Distances", unit=" letter pairs"):
-        for l2 in tqdm(letters[l1:], total = len(letters[l1:]), desc=f"Currently On: {l1}-Word Distances", unit=" letter", leave=False):
+    for l1 in tqdm(letters, total = len(letters), desc=f"{matrix_type}: Calculating {matrix_type} Distances", unit=" letter pairs", leave=False):
+        l1_index = letters.index(l1)
+        for l2 in tqdm(letters[l1_index:], total = len(letters[l1_index:]), desc=f"Currently On: {l1}-Word {matrix_type} Distances", unit=" letter", leave=False):
 
             filename = os.path.join(base_dir, filename_template.format(l1, l2))
             
@@ -461,7 +473,7 @@ def write_distance_matrix(p_dict, p_distance_dict, words_by_letters, matrix_type
             word_list2 = words_by_letters[l2]
 
             letter_pair_results = []    # Keep results inside for loop so it doesn't accumulate across letter pairs
-            for w1 in tqdm(word_list1, total=len(word_list1), desc=f"Calculating: {l1}_{l2} Distances", unit=" word", leave=False):
+            for w1 in tqdm(word_list1, total=len(word_list1), desc=f"Calculating: {l1}_{l2} {matrix_type} Distances", unit=" word", leave=False):
                 for w2 in word_list2:
                     distance = distance_func(w1, w2)
                     letter_pair_results.append((w1, w2, distance))
@@ -470,7 +482,7 @@ def write_distance_matrix(p_dict, p_distance_dict, words_by_letters, matrix_type
             with open(filename, "w", newline="") as f:
                 writer = csv.writer(f)
                 writer.writerow(header)
-                for w1, w2, distance in letter_pair_results:
+                for w1, w2, distance in tqdm(letter_pair_results, desc=f"Writing {l1}-{l2} {matrix_type} Distances to {filename_template.format(l1, l2)}", unit=" distance", leave=False):
                     distances.append(distance)  # Collect distances for averaging
                     writer.writerow([w1, w2, distance])
 
