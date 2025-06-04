@@ -51,6 +51,13 @@ TRIALS = 10000                  # Number of random trials
 PENALIZE_LENGTH_VARIANCE = True # Set to 'True' to penalize length variance
 LENGTH_VARIANCE_WEIGHT = 10     # Adjust this weight to control penalty severity
 
+# -----------------------------
+# Scoring Weights
+# -----------------------------
+LEV_WEIGHT = 1.0
+PHONEME_WEIGHT = 1.0
+SHARED_WEIGHT = 1.0
+
 # Prefixes that should not be at the start of words
 # These prefixes are often silent or not pronounced, so we filter them out
 PREFIX_FILTERS = [
@@ -106,23 +113,13 @@ BANNED_PHONEME_PREFIXES = {
 # - Words that are too similar to other words in the alphabet
 # - Slurs and racial remarks are a no-go, we diverse and tolerant in this sum-bitch
 WORD_BLACKLIST = [
-    "xhosa", 
-    "xian", 
-    "xinjiang", 
-    "xenophobia", 
-    "xenophobic", 
-    "xenophon", 
-    "iwo", 
-    "pedophile", 
-    "rapist",
 ]
 
 WORD_WHITELIST = [
 ]
 
 # Phoneme Coordinates
-PHONEME_COORDINATES = {
-    
+PHONEME_COORDINATES = {   
     # VOWELS    
     # Vowel |  Backness (Front 0 / Central 0.5 / Back 1)     Height (Low [Open] 0 / Mid 0.5 / High [Close] 1)      Roundness (Rounded 0 / Unrounded 1)
     "AA":  (0,  1,      0,       0),    # ɑ             father
@@ -426,6 +423,11 @@ def write_word_averages(p_dict, p_distance_dict):
 # @param p_dict: The phonetic dictionary mapping words to their phoneme sequences.
 # @param p_distance_dict: The phoneme distance dictionary mapping phoneme pairs to their distances.
 def write_distance_matrix(p_dict, p_distance_dict, words_by_letters, matrix_type):
+    
+    if matrix_type == "aggregate":
+        write_aggregate_score_matrix(words_by_letters)
+        return
+    
     base_dir = os.path.join("CSV Files", matrix_type.capitalize() + " Distance Matrices")
     os.makedirs(base_dir, exist_ok=True)
     
@@ -447,7 +449,7 @@ def write_distance_matrix(p_dict, p_distance_dict, words_by_letters, matrix_type
         elif matrix_type == "phoneme":
             distance = phoneme_distance(p_dict[w1][0], p_dict[w2][0], p_distance_dict)
         elif matrix_type == "shared":
-            distance = shared_phoneme_sequences( p_dict[w1][0], p_dict[w2][0], p_distance_dict)
+            distance = shared_phoneme_sequences(p_dict[w1][0], p_dict[w2][0], p_distance_dict)
         else:
             raise ValueError("Unknown matrix_type: " + matrix_type)
         return distance
@@ -490,6 +492,73 @@ def write_distance_matrix(p_dict, p_distance_dict, words_by_letters, matrix_type
             with open(avg_filename, "a", newline="") as avg_file:
                 avg_writer = csv.writer(avg_file)
                 avg_writer.writerow([l1, l2, np.mean(distances) if distances else 0.0])
+
+def read_distance_matrix(matrix_type, target_letter, compare_letter):
+    # Read a distance matrix from a CSV file and return it as a dictionary
+    filename_template = {
+        "levenshtein": "levenshtein_matrix_{0}_{1}.csv",
+        "phoneme": "phoneme_distance_matrix_{0}_{1}.csv",
+        "shared": "shared_phoneme_matrix_{0}_{1}.csv"
+    }[matrix_type]
+    
+    filename = os.path.join("CSV Files", f"{matrix_type.capitalize()} Distance Matrices", filename_template.format(target_letter, compare_letter))
+    distance_dict = {}
+    with open(filename, "r", newline="") as f:
+        reader = csv.reader(f)
+        header = next(reader)  # Skip the header row
+        for row in reader:
+            if len(row) < 3:
+                continue
+            word1, word2, distance = row[0], row[1], float(row[2])
+            if word1 not in distance_dict:
+                distance_dict[word1] = {}
+            distance_dict[word1][word2] = distance
+    return distance_dict
+
+def write_aggregate_score_matrix(words_by_letters):
+    # Write the aggregate score matrix for Levenshtein, phoneme, and shared phoneme distances
+    base_dir = os.path.join("CSV Files", "Aggregate Score Matrices")
+    os.makedirs(base_dir, exist_ok=True)
+    filename_template = "aggregate_score_matrix_{0}_{1}.csv"
+    header = ["Word 1", "Word 2", "Levenshtein Distance", "Phoneme Distance", "Shared Phoneme Sequence Count", "Score"]
+    
+    # Create the "Aggregate Averages" File to store the average scores for each letter pair
+    avg_filename = os.path.join(base_dir, f"aggregate_averages.csv")
+    with open(avg_filename, "w", newline="") as avg_file:
+        avg_writer = csv.writer(avg_file)
+        avg_writer.writerow(["Letter 1", "Letter 2", "Average Score"])
+    
+    average_scores = []  # Store average scores for each letter pair
+    letters = list(string.ascii_uppercase)
+    for l1 in tqdm(letters, total=len(letters), desc="Calculating Aggregate Scores", unit=" letter pairs", leave=False):
+        l1_index = letters.index(l1)
+        for l2 in tqdm(letters[l1_index:], total=len(letters[l1_index:]), desc=f"Currently On: {l1}-Word Aggregate Scores", unit=" letter", leave=False):
+            # Read the distance matrices for this letter pair
+            levenshtein_distances = read_distance_matrix("levenshtein", l1, l2)
+            phoneme_distances = read_distance_matrix("phoneme", l1, l2)
+            shared_distances = read_distance_matrix("shared", l1, l2)
+            
+            # Create the file and write each word pair's scores
+            filename = os.path.join(base_dir, filename_template.format(l1, l2))
+            with open(filename, "w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(header)
+                
+                for w1 in tqdm(words_by_letters[l1], total=len(words_by_letters[l1]), desc=f"Calculating: {l1}_{l2} Aggregate Scores", unit=" word", leave=False):
+                    for w2 in tqdm(words_by_letters[l2], total=len(words_by_letters[l2]), desc=f"Writing to File: {l1}_{l2} Aggregate Scores", unit=" word", leave=False):
+                        lev_distance = levenshtein_distances.get(w1, {}).get(w2, 0.0)
+                        phoneme_distance = phoneme_distances.get(w1, {}).get(w2, 0.0)
+                        shared_count = shared_distances.get(w1, {}).get(w2, 0.0)
+
+                        # Calculate the aggregate score
+                        score = (lev_distance * LEV_WEIGHT) + (phoneme_distance * PHONEME_WEIGHT) - (shared_count * SHARED_WEIGHT)
+                        average_scores.append(score)                      
+                        writer.writerow([w1, w2, lev_distance, phoneme_distance, shared_count, score])
+                        
+            # Write the average score for this letter pair
+            with open(avg_filename, "a", newline="") as avg_file:
+                avg_writer = csv.writer(avg_file)        
+                avg_writer.writerow([l1, l2, np.mean(average_scores) if average_scores else 0.0])
 
 # -------------------------------
 # Dictionary Functions
@@ -827,13 +896,14 @@ def main():
         print("1. Levenshtein")
         print("2. Phoneme")
         print("3. Shared Phoneme Sequence")
-        print("4. All Three Types")
+        print("4. Generate Aggregate Score (Levenshtein + Phoneme - Shared)")
+        print("5. All Matrices (1, 2, 3, 4)")
         matrix_choice = input("Enter your choice (1/2/3/4): ").strip()
-        if matrix_choice in {"1", "2", "3", "4"}:
+        if matrix_choice in {"1", "2", "3", "4", "5"}:
             print("\nWARNING: This operation may take a long time and will generate a large number of files where you downloaded the repo!")
             print("Press Enter to continue or Ctrl+C to cancel.")
             input()
-        matrix_types = {"1": ["levenshtein"], "2": ["phoneme"], "3": ["shared"], "4": ["levenshtein", "phoneme", "shared"]}
+        matrix_types = {"1": ["levenshtein"], "2": ["phoneme"], "3": ["shared"], "4": ["aggregate"], "5": ["levenshtein", "phoneme", "shared", "aggregate"]}
         for matrix_type in matrix_types.get(matrix_choice, ["levenshtein"]):
             write_distance_matrix(PHONEME_DICT, PHONEME_DISTANCE_DICT, WORDS_BY_LETTER, matrix_type)
     elif choice == '3':
