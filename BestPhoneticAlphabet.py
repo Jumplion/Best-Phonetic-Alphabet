@@ -4,6 +4,7 @@ import math
 import random
 import logging
 import itertools
+import json
 import string
 import time
 import igraph as ig
@@ -57,6 +58,12 @@ LENGTH_VARIANCE_WEIGHT = 10     # Adjust this weight to control penalty severity
 LEV_WEIGHT = 1.0
 PHONEME_WEIGHT = 1.0
 SHARED_WEIGHT = 1.0
+
+SPRING_FACTOR = 0.15    # Factor to control the spring force in the graph layout
+ITERATIONS = 10         # Number of iterations for the spring layout algorithm
+MAX_DISTANCE = 13.0        # Maximum distance between nodes in the graph layout
+
+FILENAME_TEMPLATE = "word_pairs_{0}_{1}_data.csv"
 
 # Prefixes that should not be at the start of words
 # These prefixes are often silent or not pronounced, so we filter them out
@@ -422,86 +429,126 @@ def write_word_averages(p_dict, p_distance_dict):
 # - E.G., "CSV Files/Levenshtein Distance Matrices/levenshtein_averages.csv"
 # @param p_dict: The phonetic dictionary mapping words to their phoneme sequences.
 # @param p_distance_dict: The phoneme distance dictionary mapping phoneme pairs to their distances.
-def write_distance_matrix(p_dict, p_distance_dict, words_by_letters, matrix_type):
+def write_distance_matrix(p_dict, p_distance_dict, words_by_letters):
     
-    if matrix_type == "aggregate":
-        write_aggregate_score_matrix(words_by_letters)
-        return
+    csv_base_dir = os.path.join("CSV Files")
+    json_base_dir = os.path.join("JSON Files")
+    os.makedirs(csv_base_dir, exist_ok=True)
+    os.makedirs(json_base_dir, exist_ok=True)
     
-    base_dir = os.path.join("CSV Files", matrix_type.capitalize() + " Distance Matrices")
-    os.makedirs(base_dir, exist_ok=True)
-    
-    filename_template = {
-        "levenshtein": "levenshtein_matrix_{0}_{1}.csv",
-        "phoneme": "phoneme_distance_matrix_{0}_{1}.csv",
-        "shared": "shared_phoneme_matrix_{0}_{1}.csv"
-    }[matrix_type]
+    csv_filename_template = "word_pairs_{0}_{1}_data.csv"
+    json_filename_template = "word_pairs_{0}_{1}_data.json"
+    header = ["Word 1", "Word 2", "Levenshtein Distance", "Phoneme Distance", "Shared Sequence Count", "Score"]
 
-    header = {
-        "levenshtein": ["Word 1", "Word 2", "Levenshtein Distance"],
-        "phoneme": ["Word 1", "Word 2", "Phoneme Distance"],
-        "shared": ["Word 1", "Word 2", "Shared Phoneme Sequence Count"]
-    }[matrix_type]
-    
-    def distance_func(w1, w2):
-        if matrix_type == "levenshtein":
-            distance = levenshtein_distance(w1, w2)
-        elif matrix_type == "phoneme":
-            distance = phoneme_distance(p_dict[w1][0], p_dict[w2][0], p_distance_dict)
-        elif matrix_type == "shared":
-            distance = shared_phoneme_sequences(p_dict[w1][0], p_dict[w2][0], p_distance_dict)
-        else:
-            raise ValueError("Unknown matrix_type: " + matrix_type)
-        return distance
-    
     # Create the "Average" File to store the average distances for each letter pair
-    avg_filename = f"{base_dir}/{matrix_type}_averages.csv"              # Write the average to a file
+    
+    avg_filename = os.path.join(csv_base_dir, "letter_pair_averages.csv")        # Write the average to a file
     with open(avg_filename, "w", newline="") as avg_file:
         avg_writer = csv.writer(avg_file)
-        avg_writer.writerow(["Letter 1", "Letter 2", "Average Distance"])  # Write header for averages file
-
+        avg_writer.writerow(["Letter 1", "Letter 2", "Average Levenshtein", "Average Phoneme Distance", "Average Shared Sequence Count", "Average Score"])  # Write header for averages file
+    
+    avg_json_filename = os.path.join(json_base_dir, "letter_pair_averages.json")
+    avg_json_dict = {}  
+    
     letters = list(string.ascii_uppercase)
-    for l1 in tqdm(letters, total = len(letters), desc=f"{matrix_type}: Calculating {matrix_type} Distances", unit=" letter pairs", leave=False):
+    for l1 in tqdm(letters, total = len(letters), desc=f"Calculating Distances...", unit=" letter", leave=False):
         l1_index = letters.index(l1)
-        for l2 in tqdm(letters[l1_index:], total = len(letters[l1_index:]), desc=f"Currently On: {l1}-Word {matrix_type} Distances", unit=" letter", leave=False):
+        for l2 in tqdm(letters[l1_index:], total = len(letters[l1_index:]), desc=f"Currently On: {l1}-Words", unit=" letter pair", leave=False):
 
-            filename = os.path.join(base_dir, filename_template.format(l1, l2))
+            csv_filename = os.path.join(csv_base_dir, csv_filename_template.format(l1, l2))
+            json_filename = os.path.join(json_base_dir, json_filename_template.format(l1, l2))
             
             # Skip if the file already exists (We already calculated this distance matrix)
-            if(os.path.exists(filename)):
+            if(os.path.exists(csv_filename) and os.path.exists(json_filename)):
                 continue
             
             word_list1 = words_by_letters[l1]
             word_list2 = words_by_letters[l2]
 
             letter_pair_results = []    # Keep results inside for loop so it doesn't accumulate across letter pairs
-            for w1 in tqdm(word_list1, total=len(word_list1), desc=f"Calculating: {l1}_{l2} {matrix_type} Distances", unit=" word", leave=False):
-                for w2 in word_list2:
-                    distance = distance_func(w1, w2)
-                    letter_pair_results.append((w1, w2, distance))
+            json_dict = {}
+            
+            # Calculate distances for each word pair in the letter pair
+            for w1 in tqdm(word_list1, total=len(word_list1), desc=f"Calculating: {l1}_{l2} Distances", unit=" word", leave=False):
+                for w2 in tqdm(word_list2, total=len(word_list2), desc=f"Calculating: Distances from {w1}", unit=" word", leave=False):
+                    if w1 == w2:
+                        continue
+                    
+                    key1, key2 = sorted([w1, w2])  # Sort to avoid duplicates like (A, B) and (B, A)
+                    
+                    if key1 not in json_dict:
+                        json_dict[key1] = {}
+                    if key2 in json_dict[key1]:
+                        continue
+                    
+                    lev = levenshtein_distance(w1, w2)
+                    phon = phoneme_distance(p_dict[w1][0], p_dict[w2][0], p_distance_dict)
+                    shared = shared_phoneme_sequences(p_dict[w1][0], p_dict[w2][0], p_distance_dict)
+                    score = (lev * LEV_WEIGHT) + (phon * PHONEME_WEIGHT) - (shared * SHARED_WEIGHT)
+                    
+                    letter_pair_results.append((w1, w2, lev, phon, shared, score))
+                    json_dict[key1][key2] = {
+                        "levenshtein_distance": lev,
+                        "phoneme_distance": phon,
+                        "shared_sequence_count": shared,
+                        "score": score
+                    }
 
-            distances = []  # Store distances for this letter pair
-            with open(filename, "w", newline="") as f:
+            # Store distances for this letter pair
+            levs_list = []  
+            phoneme_list = []
+            shared_list = []
+            scores_list = []
+            with open(csv_filename, "w", newline="") as f:
                 writer = csv.writer(f)
                 writer.writerow(header)
-                for w1, w2, distance in tqdm(letter_pair_results, desc=f"Writing {l1}-{l2} {matrix_type} Distances to {filename_template.format(l1, l2)}", unit=" distance", leave=False):
-                    distances.append(distance)  # Collect distances for averaging
-                    writer.writerow([w1, w2, distance])
+                for w1, w2, l, p, s, score in tqdm(letter_pair_results, desc=f"Writing {l1}_{l2} results to {csv_filename_template.format(l1, l2)}", unit=" distance", leave=False):
+                    levs_list.append(l)
+                    phoneme_list.append(p)
+                    shared_list.append(s)
+                    scores_list.append(score)
+                    
+                    # Collect distances for averaging
+                    writer.writerow([w1, w2, l, p, s, score])
+
+            print(f"Writing {l1}-{l2} distances to JSON files: {json_filename}",flush=True)
+            # Write the JSON file for this letter pair
+            with open(json_filename, "w") as json_file:
+                json.dump(json_dict, json_file, indent=4)
+            
+            lev_avg = np.mean(levs_list) if levs_list else 0.0
+            phoneme_avg = np.mean(phoneme_list) if phoneme_list else 0.0
+            shared_avg = np.mean(shared_list) if shared_list else 0.0
+            score_avg = np.mean(scores_list) if scores_list else 0.0
 
             # Append the average to the file
             with open(avg_filename, "a", newline="") as avg_file:
                 avg_writer = csv.writer(avg_file)
-                avg_writer.writerow([l1, l2, np.mean(distances) if distances else 0.0])
+                avg_writer.writerow([l1, l2, lev_avg, phoneme_avg, shared_avg, score_avg])
+                
+            # Append the average to the JSON file
+            if os.path.exists(avg_json_filename):
+                with open(avg_json_filename, "r") as avg_json_file:
+                    avg_json_dict = json.load(avg_json_file)
+            
+            avg_json_dict[f"{l1}-{l2}"] = {
+                "average_levenshtein": lev_avg,
+                "average_phoneme_distance": phoneme_avg,
+                "average_shared_sequence_count": shared_avg,
+                "average_score": score_avg
+            }
 
-def read_distance_matrix(matrix_type, target_letter, compare_letter):
+            with open(avg_json_filename, "w") as avg_json_file:
+                json.dump(avg_json_dict, avg_json_file, indent=4)
+            
+
+# ------------------------------------
+# Read a distance matrix from a CSV file and return it as a dictionary.
+# This function reads a distance matrix for a specific letter pair (e.g., A-B) and returns it as a dictionary.
+# ------------------------------------
+def read_distance_matrix(target_letter, compare_letter):
     # Read a distance matrix from a CSV file and return it as a dictionary
-    filename_template = {
-        "levenshtein": "levenshtein_matrix_{0}_{1}.csv",
-        "phoneme": "phoneme_distance_matrix_{0}_{1}.csv",
-        "shared": "shared_phoneme_matrix_{0}_{1}.csv"
-    }[matrix_type]
-    
-    filename = os.path.join("CSV Files", f"{matrix_type.capitalize()} Distance Matrices", filename_template.format(target_letter, compare_letter))
+    filename = os.path.join("CSV Files", FILENAME_TEMPLATE.format(target_letter, compare_letter))
     distance_dict = {}
     with open(filename, "r", newline="") as f:
         reader = csv.reader(f)
@@ -509,56 +556,12 @@ def read_distance_matrix(matrix_type, target_letter, compare_letter):
         for row in reader:
             if len(row) < 3:
                 continue
-            word1, word2, distance = row[0], row[1], float(row[2])
+            word1, word2, lev, phoneme, shared, score = row[0], row[1], float(row[2]), float(row[3]), float(row[4]), float(row[5])
+            distance = (lev, phoneme, shared, score)
             if word1 not in distance_dict:
                 distance_dict[word1] = {}
             distance_dict[word1][word2] = distance
     return distance_dict
-
-def write_aggregate_score_matrix(words_by_letters):
-    # Write the aggregate score matrix for Levenshtein, phoneme, and shared phoneme distances
-    base_dir = os.path.join("CSV Files", "Aggregate Score Matrices")
-    os.makedirs(base_dir, exist_ok=True)
-    filename_template = "aggregate_score_matrix_{0}_{1}.csv"
-    header = ["Word 1", "Word 2", "Levenshtein Distance", "Phoneme Distance", "Shared Phoneme Sequence Count", "Score"]
-    
-    # Create the "Aggregate Averages" File to store the average scores for each letter pair
-    avg_filename = os.path.join(base_dir, f"aggregate_averages.csv")
-    with open(avg_filename, "w", newline="") as avg_file:
-        avg_writer = csv.writer(avg_file)
-        avg_writer.writerow(["Letter 1", "Letter 2", "Average Score"])
-    
-    average_scores = []  # Store average scores for each letter pair
-    letters = list(string.ascii_uppercase)
-    for l1 in tqdm(letters, total=len(letters), desc="Calculating Aggregate Scores", unit=" letter pairs", leave=False):
-        l1_index = letters.index(l1)
-        for l2 in tqdm(letters[l1_index:], total=len(letters[l1_index:]), desc=f"Currently On: {l1}-Word Aggregate Scores", unit=" letter", leave=False):
-            # Read the distance matrices for this letter pair
-            levenshtein_distances = read_distance_matrix("levenshtein", l1, l2)
-            phoneme_distances = read_distance_matrix("phoneme", l1, l2)
-            shared_distances = read_distance_matrix("shared", l1, l2)
-            
-            # Create the file and write each word pair's scores
-            filename = os.path.join(base_dir, filename_template.format(l1, l2))
-            with open(filename, "w", newline="") as f:
-                writer = csv.writer(f)
-                writer.writerow(header)
-                
-                for w1 in tqdm(words_by_letters[l1], total=len(words_by_letters[l1]), desc=f"Calculating: {l1}_{l2} Aggregate Scores", unit=" word", leave=False):
-                    for w2 in tqdm(words_by_letters[l2], total=len(words_by_letters[l2]), desc=f"Writing to File: {l1}_{l2} Aggregate Scores", unit=" word", leave=False):
-                        lev_distance = levenshtein_distances.get(w1, {}).get(w2, 0.0)
-                        phoneme_distance = phoneme_distances.get(w1, {}).get(w2, 0.0)
-                        shared_count = shared_distances.get(w1, {}).get(w2, 0.0)
-
-                        # Calculate the aggregate score
-                        score = (lev_distance * LEV_WEIGHT) + (phoneme_distance * PHONEME_WEIGHT) - (shared_count * SHARED_WEIGHT)
-                        average_scores.append(score)                      
-                        writer.writerow([w1, w2, lev_distance, phoneme_distance, shared_count, score])
-                        
-            # Write the average score for this letter pair
-            with open(avg_filename, "a", newline="") as avg_file:
-                avg_writer = csv.writer(avg_file)        
-                avg_writer.writerow([l1, l2, np.mean(average_scores) if average_scores else 0.0])
 
 # -------------------------------
 # Dictionary Functions
@@ -686,25 +689,48 @@ def check_file_overwrite(filename):
 # Graphing Functions
 # --------------------------------
 
-def plot_graph(spring_factor = 0.15, iters = 50, max_distance = 1):
+def plot_graph(matrix_type, spring_factor = 0.15, iters = 50, max_distance = 1):
+    
+    base_dir = os.path.join("CSV Files", matrix_type.capitalize() + " Distance Matrices")
+    if matrix_type == "aggregate":
+        base_dir = os.path.join("CSV Files", "Aggregate Score Matrices")
+
+    filename_template = {
+        "levenshtein": "levenshtein_matrix_{0}_{1}.csv",
+        "phoneme": "phoneme_distance_matrix_{0}_{1}.csv",
+        "shared": "shared_phoneme_matrix_{0}_{1}.csv",
+        "aggregate": "aggregate_score_matrix_{0}_{1}.csv"
+    }[matrix_type]
+
     words = set()
     edges = defaultdict(list)
 
     for l1 in tqdm(string.ascii_uppercase, total=26, desc="Reading Word Distances", unit=" letter"):
         l1_index = string.ascii_uppercase.index(l1)
         check_list = string.ascii_uppercase[l1_index:]  # Only check letters after the current letter to avoid duplicates
+        
+        logging.info("Current Number of Nodes: %d", len(words))
+        logging.info("Current Number of Edges: %d", sum(len(v) for v in edges.values()))
+        
         for l2 in tqdm(check_list, total=len(check_list), desc=f"- Reading {l1}-Word Distances", unit=" letter", leave=False):
-            filename = f"CSV Files/Levenshtein Distance Matrices/levenshtein_matrix_{l1}_{l2}.csv"
+            filename = os.path.join(base_dir, filename_template.format(l1, l2))
             with open(filename, newline="") as f:
                 reader = csv.reader(f)
                 next(reader)
-                for w1, w2, dist in tqdm(reader, desc=f"-- Processing {l1}-{l2} Distances", unit=" word pair", leave=False):
-                    if w1 != w2 and int(dist) <= max_distance:
-                        words.add(w1)
-                        words.add(w2)
-                        edges[dist].append((w1, w2))
-                    #if w1 != w2 and int(dist) <= max_distance:
-
+                if matrix_type == "aggregate":
+                    # For aggregate, we need to read the score column
+                    for w1, w2, _, _, _, score in tqdm(reader, desc=f"-- Processing {l1}-{l2} Distances", unit=" word pair", leave=False):
+                        if w1 != w2 and float(score) <= max_distance:
+                            words.add(w1)
+                            words.add(w2)
+                            edges[score].append((w1, w2))
+                else:
+                    for w1, w2, dist in tqdm(reader, desc=f"-- Processing {l1}-{l2} Distances", unit=" word pair", leave=False):
+                        if w1 != w2 and float(dist) <= max_distance:
+                            words.add(w1)
+                            words.add(w2)
+                            edges[dist].append((w1, w2))
+                    
     # Build the graph with networkx for easy Plotly integration
     G = nx.Graph()
     G.add_nodes_from(tqdm(words, total=len(words), desc="Adding Nodes", unit="word"))
@@ -892,20 +918,10 @@ def main():
         write_word_averages(PHONEME_DICT, PHONEME_DISTANCE_DICT)
     elif choice == '2':
         log_console_header("Generating Distance Matrices")
-        print("Which type of matrix?")
-        print("1. Levenshtein")
-        print("2. Phoneme")
-        print("3. Shared Phoneme Sequence")
-        print("4. Generate Aggregate Score (Levenshtein + Phoneme - Shared)")
-        print("5. All Matrices (1, 2, 3, 4)")
-        matrix_choice = input("Enter your choice (1/2/3/4): ").strip()
-        if matrix_choice in {"1", "2", "3", "4", "5"}:
-            print("\nWARNING: This operation may take a long time and will generate a large number of files where you downloaded the repo!")
-            print("Press Enter to continue or Ctrl+C to cancel.")
-            input()
-        matrix_types = {"1": ["levenshtein"], "2": ["phoneme"], "3": ["shared"], "4": ["aggregate"], "5": ["levenshtein", "phoneme", "shared", "aggregate"]}
-        for matrix_type in matrix_types.get(matrix_choice, ["levenshtein"]):
-            write_distance_matrix(PHONEME_DICT, PHONEME_DISTANCE_DICT, WORDS_BY_LETTER, matrix_type)
+        print("\nWARNING: This operation may take a long time and will generate a large number of files where you downloaded the repo!")
+        print("Press Enter to continue or Ctrl+C to cancel.")
+        input()
+        write_distance_matrix(PHONEME_DICT, PHONEME_DISTANCE_DICT, WORDS_BY_LETTER)
     elif choice == '3':
         log_console_header("Finding Best Randomized Trial")
         best_scores, best_set, best_levenshtein, best_phoneme, best_shared = find_best_set_randomized(
@@ -918,7 +934,12 @@ def main():
         log_scores(best_scores['score'], "Overall", best_set, PHONEME_DICT)
     elif choice == '4':
         log_console_header("Plotting Levenshtein Cluster Graph")
-        plot_graph()
+        plot_graph(
+            matrix_type="aggregate",
+            spring_factor=SPRING_FACTOR,
+            iters=ITERATIONS,
+            max_distance=MAX_DISTANCE
+        )
     elif choice == '5':
         log_console_header("Plotting Levenshtein Bar Graph")
         plot_a_word_levenshtein_bargraph()
