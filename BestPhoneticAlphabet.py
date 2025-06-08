@@ -51,6 +51,84 @@ WORD_BLACKLIST = [
 WORD_WHITELIST = [
 ]
 
+# Custom words to add to the dictionary
+# These words will be added to the dictionary with their specified phonemes
+CUSTOM_WORDS = {
+    "amogus": ["AH", "M", "OW", "G", "Y", "UW", "S"],
+    "atrioc": ["AH", "T", "R", "IY", "AA", "K"],
+    "based": ["B", "EY", "S", "T"],
+    "bigchungus": ["B", "IH", "G", "CH", "AH", "NG", "G", "Y", "UW", "S"],
+    "boomer": ["B", "UW", "M", "ER"],
+    "boomers": ["B", "UW", "M", "ER", "Z"],
+    "bruh": ["B", "R", "AH"],
+    "chad": ["CH", "AE", "D"],
+    "chads": ["CH", "AE", "D", "Z"],
+    "cheems": ["CH", "IY", "M", "Z"],
+    "choom": ["CH", "UW", "M"],
+    "chungus": ["CH", "AH", "NG", "G", "Y", "UW", "S"],
+    "cringe": ["K", "R", "IH", "N", "JH"],
+    "cringed": ["K", "R", "IH", "N", "JH", "T"],
+    "cringes": ["K", "R", "IH", "N", "JH", "IH", "Z"],
+    "cringing": ["K", "R", "IH", "N", "JH", "IH", "NG"],
+    "degen": ["D", "EH", "JH", "EH", "N"],
+    "degens": ["D", "EH", "JH", "EH", "N", "Z"],
+    "doge": ["D", "OW", "JH"],
+    "fomo": ["F", "OW", "M", "OW"],
+    "fud": ["F", "AH", "D"],
+    "fudds": ["F", "AH", "D", "Z"],
+    "glizzy": ["G", "L", "IH", "Z", "IY"],
+    "glizzytober": ["G", "L", "IH", "Z", "IY", "T", "OW", "B", "ER"],
+    "gyatt": ["JH", "AY", "AE", "T"],
+    "kappa": ["K", "AE", "P", "AH"],
+    "kekw": ["K", "EH", "K", "D", "AH", "B", "L", "Y", "UW"],
+    "lol": ["EH", "L", "OW", "EH", "L"],
+    "lmao": ["EH", "L", "M", "EY", "OW"],
+    "lurk": ["L", "ER", "K"],
+    "noob": ["N", "UW", "B"],
+    "noobs": ["N", "UW", "B", "Z"],
+    "nocap": ["N", "OW", "K", "AE", "P"],
+    "omegalul": ["OW", "M", "EH", "G", "AH", "L", "UW", "L"],
+    "pepe": ["P", "EH", "P", "EY"],
+    "pepega": ["P", "EH", "P", "EY", "G", "AH"],
+    "pepegas": ["P", "EH", "P", "EY", "G", "AH", "Z"],
+    "pepehands": ["P", "EH", "P", "EY", "HH", "AE", "N", "D", "Z"],
+    "pog": ["P", "AO", "G"],
+    "pogchamp": ["P", "AO", "G", "CH", "AE", "M", "P"],
+    "pogchamps": ["P", "AO", "G", "CH", "AE", "M", "P", "S"],
+    "poggers": ["P", "AO", "G", "ER", "Z"],
+    "poggies": ["P", "AO", "G", "IY", "Z"],
+    "pogu": ["P", "AO", "G", "Y", "UW"],
+    "poguette": ["P", "AO", "G", "Y", "UW", "EH", "T"],
+    "poguettes": ["P", "AO", "G", "Y", "UW", "EH", "T", "S"],
+    "pogus": ["P", "AO", "G", "Y", "UW", "Z"],
+    "rekt": ["R", "EH", "K", "T"],
+    "rofl": ["R", "OW", "F", "AH", "L"],
+    "roflmao": ["R", "OW", "F", "AH", "L", "M", "EY", "OW"],
+    "sheesh": ["SH", "IY", "SH"],
+    "shrek": ["SH", "R", "EH", "K"],
+    "shreking": ["SH", "R", "EH", "K", "IH", "NG"],
+    "shreks": ["SH", "R", "EH", "K", "S"],
+    "simp": ["S", "IH", "M", "P"],
+    "sus": ["S", "AH", "S"],
+    "tendie": ["T", "EH", "N", "D", "IY"],
+    "tendies": ["T", "EH", "N", "D", "IY", "Z"],
+    "ussy": ["AH", "S", "IY"],
+    "xd": ["EH", "K", "S", "D", "IY"],
+    "yeet": ["Y", "IY", "T"],
+    "yikes": ["Y", "AY", "K", "S"],
+    "yiker": ["Y", "AY", "K", "ER"],
+    "zoinks": ["Z", "OY", "NG", "K", "S"],
+    "zomg": ["Z", "OW", "M", "G"],
+    "skibidi": ["S", "K", "IH", "B", "IY", "D", "IY"],
+    "rizz": ["R", "IH", "Z"],
+    "rizzed": ["R", "IH", "Z", "D"],
+    "rizzler": ["R", "IH", "Z", "L", "ER"],
+    "incel": ["IH", "N", "S", "EH", "L"],
+    "obamna": ["OW", "B", "AA", "M", "N", "AH"],
+    "glarketing": ["G", "L", "AA", "R", "K", "AH", "T", "IH", "NG"],
+    "glarketer": ["G", "L", "AA", "R", "K", "AH", "T", "ER"],
+}
+
 # Prefixes that should not be at the start of words
 # These prefixes are often silent or not pronounced, so we filter them out
 PREFIX_FILTERS = [
@@ -189,7 +267,7 @@ def levenshtein_distance(w1, w2):
     return editdistance.eval(w1, w2)
 
 # Calculate the phoneme distance between two phoneme sequences.
-def phoneme_distance(p1_list, p2_list, p_distance_dict=PHONEME_DISTANCE_DICT):
+def phoneme_distance(p1_list, p2_list, p_distance_dict):
     distance = 0
     for i in range(min(len(p1_list), len(p2_list))):
         distance += p_distance_dict.get((p1_list[i], p2_list[i]), 0)
@@ -208,7 +286,7 @@ def phoneme_distance(p1_list, p2_list, p_distance_dict=PHONEME_DISTANCE_DICT):
 # Count the number of shared contiguous phoneme subarrays between p1 and p2,
 # for all lengths from 1 up to N, where N = min(len(p1), len(p2)).
 # Takes p_distance_dict purely for compatibility, but does not use it in this function.
-def shared_phoneme_sequences(p1, p2, p_distance_dict=PHONEME_DISTANCE_DICT): 
+def shared_phoneme_sequences(p1, p2, p_distance_dict): 
     set1, set2 = set(), set()
     n1, n2 = len(p1), len(p2)
     N = min(n1, n2)
@@ -226,8 +304,11 @@ def shared_phoneme_sequences(p1, p2, p_distance_dict=PHONEME_DISTANCE_DICT):
     # Count the intersection
     return len(set1 & set2)
 
+def _score_candidate_unpack(args):
+    return _score_candidate(*args)
+
 # Helper function for scoring a candidate.
-def _score_candidate(candidate, p_dict=PHONEME_DICT, p_distance_dict=PHONEME_DISTANCE_DICT):
+def _score_candidate(candidate, p_dict, p_distance_dict):
     pairs = list(itertools.combinations(candidate, 2))
     lev = phon = shared = []
 
@@ -246,65 +327,149 @@ def _score_candidate(candidate, p_dict=PHONEME_DICT, p_distance_dict=PHONEME_DIS
     return (score, avg_levenshtein, avg_phoneme, avg_shared)
 
 # Find the best set of words via random sampling (no parallel processing).
-def find_best_set_randomized(p_dict, p_distance_dict, words_by_letter, trials=1000): 
+def find_best_set_randomized(p_dict, p_distance_dict, words_by_letter, trials=1000, batch_size=1000): 
     log_console_header("Starting Randomized Search for Best Set of Words", trials)
-    best_score = best_score_levenshtein = best_score_phoneme = float('-inf')
-    best_score_shared = float('inf')
+    best_scores = {
+        "score": (float('-inf'), []),
+        "levenshtein": (float('-inf'), []),
+        "phoneme": (float('-inf'), []),
+        "shared": (float('inf'), []),
+    }
 
-    best_set = best_levenshtein = best_phoneme = best_shared = []
-
-    letters = sorted(words_by_letter.keys())
+    letters = list(string.ascii_uppercase)
 
     # Delete the file if it exists
     if os.path.exists("random_search_log.csv"):
         os.remove("random_search_log.csv")
 
-    candidates = []
-    for _ in range(trials):
-        c = [random.choice(words_by_letter[l]) for l in letters if words_by_letter[l]]
-        if len(c) == len(letters):  # Ensure we have one word per letter
-            candidates.append(c)
+    def candidate_gen():
+        for _ in range(trials):
+            c = [random.choice(words_by_letter[l]) for l in letters if words_by_letter[l]]
+            if len(c) == len(letters):  # Ensure we have one word per letter
+                yield c
 
-    results = {}
-    # parallel processing of candidates
-    log_console_header("Scoring Candidates...")
-    with concurrent.futures.ProcessPoolExecutor() as executor:
-        futures = {executor.submit(_score_candidate, c, p_dict, p_distance_dict): c for c in candidates}
-        for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="Scoring Candidates", unit="candidate"):
-            score, avg_lev, avg_phon, avg_shared = future.result()
-            candidate = futures[future]
-            results[tuple(candidate)] = (score, avg_lev, avg_phon, avg_shared)
-
+    def update_bests(score, avg_lev, avg_phon, avg_shared, c):
+        best_scores["levenshtein"] = max(best_scores["levenshtein"], (avg_lev, c), key=lambda x: x[0])
+        best_scores["phoneme"] = max(best_scores["phoneme"], (avg_phon, c), key=lambda x: x[0])
+        best_scores["shared"] = min(best_scores["shared"], (avg_shared, c), key=lambda x: x[0])
+        best_scores["score"] = max(best_scores["score"], (score, c), key=lambda x: x[0])
+    
     with open("random_search_log.csv", "a", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["Score", "Avg Levenshtein Distance", "Avg Phoneme Distance (Basic)", "Avg Shared Phoneme Sequence Count"]
-                        + list("ABCDEFGHIJKLMNOPQRSTUVWXYZ"))   # Write Header
+        writer.writerow([
+            "Score", "Avg Levenshtein Distance", "Avg Phoneme Distance (Basic)", "Avg Shared Phoneme Sequence Count"
+        ] + list("ABCDEFGHIJKLMNOPQRSTUVWXYZ"))
 
-        for c in tqdm(results.keys(), total=len(results), desc="Writing Results to CSV", unit=" candidate"):
-            score, avg_lev, avg_phon, avg_shared = results[c]
-            writer.writerow([score, avg_lev, avg_phon, avg_shared] + list(c))
-            
-            if score > best_score:
-                best_score = score
-                best_set = c
-            if avg_lev > best_score_levenshtein:
-                best_score_levenshtein = avg_lev
-                best_levenshtein = c
-            if avg_phon > best_score_phoneme:
-                best_score_phoneme = avg_phon
-                best_phoneme = c
-            if avg_shared < best_score_shared:
-                best_score_shared = avg_shared
-                best_shared = c
+        batch = []
+        for c in tqdm(candidate_gen(), total=trials, desc="Generating and Scoring Candidates", unit="candidate"):
+            batch.append(c)
+            if len(batch) >= batch_size:
+                # Build a minimal p_dict for this batch
+                all_words = set(w for candidate in batch for w in candidate)
+                mini_p_dict = {w: p_dict[w] for w in all_words}
+                # Prepare arguments for each candidate
+                args = [(candidate, mini_p_dict, p_distance_dict) for candidate in batch]
+                with concurrent.futures.ProcessPoolExecutor() as executor:
+                    results = list(tqdm(executor.map(_score_candidate_unpack, args), total=len(args), desc="Scoring Candidates in Batch", unit="candidate", leave=False))
+                for c, (score, avg_lev, avg_phon, avg_shared) in zip(batch, results):
+                    writer.writerow([score, avg_lev, avg_phon, avg_shared] + list(c))
+                    update_bests(score, avg_lev, avg_phon, avg_shared, c)
+                batch = []
+        # Process any remaining
+        if batch:
+            all_words = set(w for candidate in batch for w in candidate)
+            mini_p_dict = {w: p_dict[w] for w in all_words}
+            args = [(candidate, mini_p_dict, p_distance_dict) for candidate in batch]
+            with concurrent.futures.ProcessPoolExecutor() as executor:
+                results = list(tqdm(executor.map(_score_candidate_unpack, args), total=len(args), desc="Scoring Candidates in Batch", unit="candidate", leave=False))
+            for c, (score, avg_lev, avg_phon, avg_shared) in zip(batch, results):
+                writer.writerow([score, avg_lev, avg_phon, avg_shared] + list(c))
+                update_bests(score, avg_lev, avg_phon, avg_shared, c)
 
-    best_scores = {
-        "score": best_score,
-        "best levenshtein": best_score_levenshtein,
-        "best phoneme": best_score_phoneme,
-        "best shared": best_score_shared
+    return best_scores
+
+# Given a list of unique, pre-selected words, fill out the rest of the alphabet with random sampling,
+# and return the best phonetic alphabet found after the specified number of trials.
+def find_best_set_with_preselected(
+    preselected_words,
+    p_dict,
+    p_distance_dict,
+    words_by_letter,
+    trials=1000,
+    batch_size=1000
+):
+
+    # Normalize and deduplicate preselected words
+    preselected_words = [w.lower() for w in preselected_words]
+    preselected_by_letter = {}
+    for w in preselected_words:
+        l = w[0].upper()
+        if l in preselected_by_letter:
+            print(f"Warning: Multiple preselected words for letter '{l}'. Using '{min(preselected_by_letter[l], w)}'.")
+            preselected_by_letter[l] = min(preselected_by_letter[l], w)
+        else:
+            preselected_by_letter[l] = w
+
+    letters = list(string.ascii_uppercase)
+    # Check that all preselected words exist in the dictionary
+    for l, w in preselected_by_letter.items():
+        if w not in p_dict:
+            raise ValueError(f"Preselected word '{w}' for letter '{l}' not found in dictionary.")
+
+    # Prepare the pool of available words for each letter (excluding preselected)
+    available_words_by_letter = {
+        l: [w for w in words_by_letter[l] if w not in preselected_by_letter.values()]
+        for l in letters
     }
 
-    return best_scores, best_set, best_levenshtein, best_phoneme, best_shared
+    # Build the fixed part of the candidate
+    fixed_words = [preselected_by_letter[l] for l in letters if l in preselected_by_letter]
+    fixed_letters = set(preselected_by_letter.keys())
+
+    best_candidate = None
+    best_details = None
+
+    def candidate_gen():
+        for _ in range(trials):
+            candidate = fixed_words.copy()
+            used_letters = fixed_letters.copy()
+            for l in letters:
+                if l not in used_letters:
+                    candidate.append(random.choice(available_words_by_letter[l]))
+            if len(candidate) == len(letters):
+                yield candidate
+
+    def process_candidate(b):
+        # Build a minimal p_dict for this batch
+        all_words = set(w for candidate in b for w in candidate)
+        mini_p_dict = {w: p_dict[w] for w in all_words}
+        args = [(candidate, mini_p_dict, p_distance_dict) for candidate in b]
+        with concurrent.futures.ProcessPoolExecutor() as executor:
+            results = list(tqdm(executor.map(_score_candidate_unpack, args), total=len(args), desc="Scoring Candidates in Batch", unit="candidate", leave=False))
+        for candidate, (score, avg_lev, avg_phon, avg_shared) in zip(b, results):
+            if score > best_details[0] if best_details else float('-inf'):
+                best_candidate = candidate
+                best_details = (score, avg_lev, avg_phon, avg_shared)    
+        return best_candidate, best_details
+    
+    batch = []
+    for c in tqdm(candidate_gen(), total=trials, desc="Generating and Scoring Candidates", unit="candidate", colour="green"):
+        batch.append(c)
+        if len(batch) >= batch_size:
+            best_candidate, best_details = process_candidate(batch)
+            batch = []
+    # Process any remaining
+    if batch:
+        best_candidate, best_details = process_candidate(batch)
+
+    # Print the best result
+    print("\nBest Phonetic Alphabet Found:")
+    print(f"Score: {best_details[0]:.4f} | Avg Levenshtein: {best_details[1]:.4f} | Avg Phoneme: {best_details[2]:.4f} | Avg Shared: {best_details[3]:.4f}")
+    for l, w in zip(letters, best_candidate):
+        tag = "(preselected)" if l in preselected_by_letter and preselected_by_letter[l] == w else ""
+        print(f"{l}: {w} {tag}")
+
+    return best_candidate, best_details
 
 # Helper function for parallel processing of word distances.
 def _word1_distances(args):
@@ -518,6 +683,60 @@ def write_distance_matrix_json():
             with open(json_filename, "w") as json_file:
                 json.dump(distance_dict, json_file, indent=4)
 
+def find_best_set_simulated_annealing(
+    p_dict,
+    p_distance_dict,
+    words_by_letter,
+    initial_temp=1000,
+    cooling_rate=0.995,
+    iterations=10000
+):
+    log_console_header("Starting Simulated Annealing Search", f"Iterations: {iterations}, Initial Temp: {initial_temp}, Cooling Rate: {cooling_rate}")
+
+    letters = list(string.ascii_uppercase)
+    
+    # Initialize with a random candidate (1 word per letter)
+    current_candidate = [random.choice(words_by_letter[l]) for l in letters if words_by_letter[l]]
+    current_score, _, _, _ = _score_candidate(current_candidate, p_dict, p_distance_dict)
+    
+    best_candidate = current_candidate[:]
+    best_score = current_score
+
+    temp = initial_temp
+
+    for step in tqdm(range(iterations), desc="Simulated Annealing Progress", unit="iteration"):
+        # Pick a random partition to swap
+        partition_idx = random.randint(0, len(letters) - 1)
+        letter = letters[partition_idx]
+        if not words_by_letter[letter]:
+            continue  # Skip if no words for that letter
+        new_word = random.choice(words_by_letter[letter])
+        if new_word == current_candidate[partition_idx]:
+            continue  # Skip if the new word is the same as current
+
+        # Create new candidate by swapping one word
+        new_candidate = current_candidate[:]
+        new_candidate[partition_idx] = new_word
+
+        new_score, _, _, _ = _score_candidate(new_candidate, p_dict, p_distance_dict)
+        delta_score = new_score - current_score
+
+        # Accept if better or probabilistically if worse
+        if delta_score > 0 or math.exp(delta_score / temp) > random.random():
+            current_candidate = new_candidate
+            current_score = new_score
+            if new_score > best_score:
+                best_candidate = new_candidate
+                best_score = new_score
+
+        temp *= cooling_rate  # Cool down
+
+    log_console_header("Simulated Annealing Completed")
+    log_scores("Simulated Annealing Best Score", (best_score, best_candidate), p_dict)
+
+    return best_candidate, best_score
+
+
 # Read the letter_pair_averages.csv file and write the averages to a JSON file
 def write_distance_averages_json():
     logging.info("Writing letter pair averages to JSON file")
@@ -580,6 +799,7 @@ def read_distance_matrix(target_letter, compare_letter):
 # -------------------------------
 
 # Compare every phoneme coordinate with every other, as well as itself and an empty string
+
 def get_phoneme_distance_dict():
     phonemes = list(PHONEME_COORDINATES.keys())
     distance = defaultdict(float)
@@ -660,6 +880,10 @@ def get_cleaned_cmu_dict():
     for word, pronunciations in tqdm(cleaned_dict.items(), desc="Normalizing Phonemes", unit="word"):
         cleaned_dict[word] = [[p.upper() for p in [p[:-1] if p[-1].isdigit() else p for p in pron]] for pron in pronunciations]
 
+    # Add Custom Words to the dictionary
+    for word, pron in CUSTOM_WORDS.items():
+        cleaned_dict[word.lower()] = [pron]
+
     logging.info("CMU Pronouncing Dictionary Cleaned | Total Words: %d", len(cleaned_dict))
 
     return cleaned_dict
@@ -678,11 +902,11 @@ def log_console_header(message, data=None):
     logging.info("--------------------------------")
 
 # Log the best scores and words in a formatted way
-def log_scores(score, list_name, words, p_dict):
+def log_scores(list_name, set, p_dict):
     logging.info("--------------------------------")
-    logging.info("Best %s Set (%.6f):", list_name, score)
+    logging.info("Best %s Set (%.6f):", list_name, set[0])
     logging.info("--------------------------------")
-    for word in words:
+    for word in set[1]:
         logging.info("%-12s  ->  %s", word.capitalize(), ' '.join(p_dict[word][0]))
 
 # --------------------------------
@@ -870,7 +1094,7 @@ def plot_a_word_levenshtein_bargraph():
 # -----------------------------
 # Randomization Options
 # -----------------------------
-TRIALS = 1000                   # Number of random trials
+TRIALS = 10000                   # Number of random trials
 PENALIZE_LENGTH_VARIANCE = True # Set to 'True' to penalize length variance
 LENGTH_VARIANCE_WEIGHT = 10     # Adjust this weight to control penalty severity
 
@@ -909,6 +1133,8 @@ def main():
     print("3. Find Best Randomized Trial")
     print("4. Plot Graph")
     print("5. Plot Levenshtein Bar Graph")
+    print("6. Generate Custom Phonetic Alphabet")
+    print("7. Find Best Simulated Annealing Trial")
     print("Q. Quit")
     choice = input("Enter your choice (1/2/3/4/5/Q): ").strip().lower()
 
@@ -949,20 +1175,34 @@ def main():
             return
     elif choice == '3':
         log_console_header("Finding Best Randomized Trial")
-        best_scores, best_set, best_levenshtein, best_phoneme, best_shared = find_best_set_randomized(
-            PHONEME_DICT, PHONEME_DISTANCE_DICT, WORDS_BY_LETTER, TRIALS
-        )
+        best_scores = find_best_set_randomized(PHONEME_DICT, PHONEME_DISTANCE_DICT, WORDS_BY_LETTER, TRIALS)
         # Log best sets
-        log_scores(best_scores['best levenshtein'], "Levenshtein Distance", best_levenshtein, PHONEME_DICT)
-        log_scores(best_scores['best phoneme'], "Phoneme Distance", best_phoneme, PHONEME_DICT)
-        log_scores(best_scores['best shared'], "Shared Phoneme Sequence Count", best_shared, PHONEME_DICT)
-        log_scores(best_scores['score'], "Overall", best_set, PHONEME_DICT)
+        log_scores("Levenshtein Distance", best_scores['levenshtein'], PHONEME_DICT)
+        log_scores("Phoneme Distance", best_scores['phoneme'], PHONEME_DICT)
+        log_scores("Shared Phoneme Sequence Count", best_scores['shared'], PHONEME_DICT)
+        log_scores("Overall", best_scores['score'], PHONEME_DICT)
     elif choice == '4':
         log_console_header("Plotting Cluster Graph")
         plot_graph(spring_factor=SPRING_FACTOR, iters=ITERATIONS, max_distance=MAX_DISTANCE)
     elif choice == '5':
         log_console_header("Plotting Levenshtein Bar Graph")
         plot_a_word_levenshtein_bargraph()
+    elif choice == '6':
+        # Ask the user for a list of words
+        user_words = input("Enter a list of words separated by commas: ").strip().split(',')
+        user_words = [word.strip().lower() for word in user_words if word.strip()]
+        
+        # For testing, generate a random list of words from the CMU dictionary
+        custom_dict = random.sample(list(PHONEME_DICT.keys()), random.randint(1, 26))
+        # custom_dict = {word: PHONEME_DICT[word] for word in user_words if word in PHONEME_DICT}
+        if not custom_dict:
+            print("No valid words found in the CMU dictionary. Please run the program again.")
+            return
+        find_best_set_with_preselected(custom_dict, PHONEME_DICT, PHONEME_DISTANCE_DICT, WORDS_BY_LETTER, TRIALS)
+    elif choice == '7':
+        log_console_header("Finding Best Simulated Annealing Trial")
+        best_candidate, best_score = find_best_set_simulated_annealing(PHONEME_DICT, PHONEME_DISTANCE_DICT, WORDS_BY_LETTER, iterations=100000)
+        log_scores("Simulated Annealing", (best_score, best_candidate), PHONEME_DICT)
     elif choice == 'q':
         log_console_header("Exiting Program")
         return
