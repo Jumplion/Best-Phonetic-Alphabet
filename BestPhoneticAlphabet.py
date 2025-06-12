@@ -36,7 +36,8 @@ logging.basicConfig(
     ]
 )
 
-FILENAME_CSV_TEMPLATE = "word_pairs_{0}_{1}_data.csv"
+WORD_PAIR_FILENAME_TEMPLATE = "word_pairs_{0}_{1}_data.csv"
+LETTER_PAIR_FILENAME = "letter_pair_averages.csv"
 CSV_DISTANCE_HEADERS = ["Source", "Target", "Score",
         "Source-Phonemes", "Target-Phonemes",
         "Levenshtein Distance", "Phoneme Distance", 
@@ -432,7 +433,7 @@ def _score_candidate(selected_words, p_dict, p_distance_dict, phoneme_suffix_len
     WEIGHT_SHARED_SEQ = 2.0
     WEIGHT_SHARED_SUFFIX = 2.0
     WEIGHT_RHYME = 2.0
-    WEIGHT_VOWEL_DIVERSITY = 1.0  # adjust as needed
+    WEIGHT_VOWEL_DIVERSITY = 1.0
 
     score = (
         (WEIGHT_LEVENSHTEIN * lev_norm)
@@ -477,11 +478,11 @@ def find_best_set_randomized(p_dict, p_distance_dict, words_by_letter, trials=10
             l = w[0].upper()
             preselected_by_letter[l] = min(preselected_by_letter[l], w) if l in preselected_by_letter else w
 
+    headers = ["Score", "Total Levenshtein Distance", "Total Phoneme Distance", 
+            "Total Shared Sequences", "Total Shared Suffixes"] + list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
     with open("random_search_log.csv", "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow([
-            "Score", "Total Levenshtein Distance", "Total Phoneme Distance", "Total Shared Phoneme Sequences", "Total Shared Suffixes"
-        ] + list("ABCDEFGHIJKLMNOPQRSTUVWXYZ"))
+        writer.writerow(headers)
 
         batch = []
         for c in tqdm(candidate_gen(trials, letters, words_by_letter, preselected_by_letter), total=trials, desc=f"Generating and Scoring Candidates", unit="candidate"):
@@ -541,8 +542,8 @@ def write_distance_matrix_csv(p_dict, p_distance_dict, words_by_letters):
         l2_letters = letters[l1_index + 1:] if l1_index + 1 < len(letters) else []  
         
         for l2 in tqdm(l2_letters, total=len(l2_letters), desc=f"Calculating {l1}-Letter Pairs", unit=" letter pair", leave=False, colour="red"):  # Only create pairs (A-B, A-C, ..., B-C, ..., Z-Z)
-            csv_filename = os.path.join(csv_base_dir, FILENAME_CSV_TEMPLATE.format(l1, l2))  
-            gephi_filename = os.path.join(gephi_base_dir, FILENAME_CSV_TEMPLATE.format(l1, l2))    
+            csv_filename = os.path.join(csv_base_dir, WORD_PAIR_FILENAME_TEMPLATE.format(l1, l2))  
+            gephi_filename = os.path.join(gephi_base_dir, WORD_PAIR_FILENAME_TEMPLATE.format(l1, l2))    
             
             word_list1 = words_by_letters[l1]
             word_list2 = words_by_letters[l2]
@@ -578,20 +579,18 @@ def write_distance_matrix_csv(p_dict, p_distance_dict, words_by_letters):
 # This function reads all the CSV files in the "CSV Files" directory and calculates the averages for each letter pair.
 # The results are written to a new CSV file named "letter_pair_averages.csv".
 def write_distance_averages_csv():
+    
     letters = list(string.ascii_uppercase)
-    csv_base_dir = os.path.join("CSV Files")
-    avg_csv_filename = os.path.join(csv_base_dir, "letter_pair_averages.csv")
-    with open(avg_csv_filename, "w", newline="") as avg_file:
+    avg_filename = os.path.join("CSV Files", LETTER_PAIR_FILENAME)
+    
+    with open(avg_filename, "w", newline="") as avg_file:
         avg_writer = csv.writer(avg_file)
         avg_writer.writerow(CSV_DISTANCE_AVERAGE_HEADERS)
-    
-    if not os.path.exists(csv_base_dir):
-        logging.warning(f"CSV base directory '{csv_base_dir}' does not exist. Skipping average calculation.")
-        return
 
     for l1 in tqdm(letters, total=len(letters), desc="Calculating Letter Pair Averages", unit=" letter", colour="green"):
         l1_index = letters.index(l1)
-        l2_letters = letters[l1_index:]  # Get letters after l1 (not including l1 itself) This avoids redundant pairs like A-B and B-A
+        # Get letters after l1 (not including l1 itself) This avoids redundant pairs like A-B and B-A
+        l2_letters = letters[l1_index + 1:] if l1_index + 1 < len(letters) else []
         for l2 in tqdm(l2_letters, total=len(l2_letters), desc=f"Calculating {l1}-Letter Pair Averages", unit=" letter pair", leave=False, colour="yellow"):
             data = {
                 "levenshtein": [],
@@ -603,39 +602,80 @@ def write_distance_averages_csv():
             word_pairs = read_distance_matrix(l1, l2)
             for w1 in tqdm(word_pairs, total=len(word_pairs), desc=f"Processing {l1}-{l2} Word Pairs", unit=" word", leave=False, colour="red"):
                 for w2 in word_pairs[w1]:
-                    lev, phoneme, shared, score = word_pairs[w1][w2]
-                    data["levenshtein"].append(lev)
-                    data["phoneme"].append(phoneme)
-                    data["shared"].append(shared)
-                    data["score"].append(score)
+                    data["levenshtein"].append(word_pairs[w1][w2]["levenshtein"])
+                    data["phoneme"].append(word_pairs[w1][w2]["phoneme"])
+                    data["shared"].append(word_pairs[w1][w2]["shared"])
+                    data["score"].append(word_pairs[w1][w2]["score"])
             
             # Write the Letter-Pair Averages and other data points to the Letter-Pair Averages CSV file
-            with open(avg_csv_filename, "a", newline="") as avg_file:
-                avg_writer = csv.writer(avg_file)
-                avg_writer.writerow([l1, l2, len(data["levenshtein"]),
-                                    np.min(data["levenshtein"]),    np.max(data["levenshtein"]),    np.mean(data["levenshtein"]),   np.std(data["levenshtein"]),
-                                    np.min(data["phoneme"]),        np.max(data["phoneme"]),        np.mean(data["phoneme"]),       np.std(data["phoneme"]),
-                                    np.min(data["shared"]),         np.max(data["shared"]),         np.mean(data["shared"]),        np.std(data["shared"]),
-                                    np.min(data["score"]),          np.max(data["score"]),          np.mean(data["score"]),         np.std(data["score"])])
+            with open(avg_filename, "a", newline="") as avg_file:
+                    avg_writer = csv.writer(avg_file)
+                    l_min, l_max, l_avg, l_std = np.min(data["levenshtein"]),    np.max(data["levenshtein"]),    np.mean(data["levenshtein"]),   np.std(data["levenshtein"])
+                    p_min, p_max, p_avg, p_std = np.min(data["phoneme"]),        np.max(data["phoneme"]),        np.mean(data["phoneme"]),       np.std(data["phoneme"])
+                    s_min, s_max, s_avg, s_std = np.min(data["shared"]),         np.max(data["shared"]),         np.mean(data["shared"]),        np.std(data["shared"])
+                    x_min, x_max, x_avg, x_std = np.min(data["score"]),          np.max(data["score"]),          np.mean(data["score"]),         np.std(data["score"])
+                    
+                    avg_writer.writerow([l1, l2, len(data["levenshtein"]),
+                                    l_min, l_max, l_avg, l_std,
+                                    p_min, p_max, p_avg, p_std,
+                                    s_min, s_max, s_avg, s_std,
+                                    x_min, x_max, x_avg, x_std])
+
+"""
+Exports a Gephi-compatible .gexf graph file where:
+- Nodes are words grouped by first letter
+- Edge weights are inverse of dissimilarity scores
+- Also stores raw dissimilarity score per edge
+"""
+def export_scored_graph_to_gexf(word_groups, p_dict, p_distance_dict, filename="Gephi Files/scored_graph.gexf", max_per_group=100, epsilon=1e-6):
+    G = nx.Graph()
+
+    # Limit size per group
+    trimmed_groups = { letter: words[:max_per_group]for letter, words in word_groups.items() if words }
+
+    # Add nodes with group labels
+    for letter, words in tqdm(trimmed_groups.items(), total=len(trimmed_groups), desc="Adding nodes"):
+        for word in tqdm(words, total=len(words), desc=f"Adding {letter} Words", leave=False):
+            G.add_node(word, group=letter)
+
+    # Add edges with inverse score weights
+    letters = list(trimmed_groups.keys())
+    for i in tqdm(range(len(letters)), desc="Calculating Edges", total=len(letters)):
+        for j in tqdm(range(i + 1, len(letters)), desc=f"On {letters[i]}", total=len(letters)-1, leave=False):
+            for w1 in tqdm(trimmed_groups[letters[i]], total=len(trimmed_groups[letters[i]]), desc=f"On {letters[i]}_{letters[j]} Letter Word Pairs...", leave=False):
+                for w2 in trimmed_groups[letters[j]]:
+                    try:
+                        c = [w1, w2]
+                        score = _score_candidate(c, p_dict, p_distance_dict)["score"]
+                        weight = max(epsilon, 1 / (score + epsilon))
+                        G.add_edge(w1, w2, raw_score=score, weight=weight)
+                    except Exception as e:
+                        print(f"⚠️ Error scoring pair ({w1}, {w2}): {e}")
+
+    # Ensure output directory exists
+    os.makedirs(os.path.dirname(filename) or ".", exist_ok=True)
+    log_console_header(f"Writing Gephi graph to {filename}...")
+    nx.write_gexf(G, filename)
+    print(f"✅ Exported {len(G.nodes)} nodes and {len(G.edges)} edges to '{filename}'")
 
 '''
 # Read a distance matrix from a CSV file and return it as a dictionary.
 # This function reads a distance matrix for a specific letter pair (e.g., A-B) and returns it as a dictionary.
 '''
 def read_distance_matrix(target_letter, compare_letter):
-    filename = os.path.join("CSV Files", FILENAME_CSV_TEMPLATE.format(target_letter, compare_letter))
+    filename = os.path.join("CSV Files", WORD_PAIR_FILENAME_TEMPLATE.format(target_letter, compare_letter))
     distance_dict = defaultdict(dict)
     if not os.path.exists(filename):
         logging.warning(f"Distance matrix file '{filename}' does not exist.")
         return distance_dict
     
     with open(filename, "r", newline="") as f:
+        data = defaultdict()
         reader = csv.reader(f)
         next(reader)  # Skip the header row
-        for row in reader:
+        for row in tqdm(reader, desc=f"Reading {filename}...", colour="blue", leave=False, unit=" row"):
             
             # Create a dictionary for the row data based on the CSV headers
-            data = {}
             for h in CSV_DISTANCE_HEADERS:
                 data[h] = row[CSV_DISTANCE_HEADERS.index(h)]
                 
@@ -694,6 +734,7 @@ def get_phoneme_distance_dict():
     
     # Return the distance dictionary 
     return distance
+
 
 # Clean the CMU Pronouncing Dictionary and apply filters.
 def get_cleaned_cmu_dict():
@@ -788,7 +829,7 @@ def plot_graph(spring_factor = 0.15, iters = 50, max_distance = 2.0):
         check_list = letters[l1_index:]  # Only check letters after the current letter to avoid duplicates
 
         for l2 in tqdm(check_list, total=len(check_list), desc=f"- Reading {l1}-Word Distances | {len(G.nodes)} Nodes | {len(G.edges)} Edges", unit=" letter", leave=False, colour="yellow"):
-            filename = os.path.join(base_dir, FILENAME_CSV_TEMPLATE.format(l1, l2))
+            filename = os.path.join(base_dir, WORD_PAIR_FILENAME_TEMPLATE.format(l1, l2))
             edges = defaultdict(list)
 
             # Sort the csv file by distance before processing
@@ -877,44 +918,20 @@ def plot_graph(spring_factor = 0.15, iters = 50, max_distance = 2.0):
     fig.write_html(f"cluster_graph_iter_{iters}_score_range_{max_distance}.html")
     fig.show()
 
+
+
 def plot_a_word_levenshtein_bargraph():
     
     letters = sorted(string.ascii_uppercase)
-    averages = {l: [] for l in letters}
+    averages = defaultdict()
     
-    if os.path.exists("CSV Files/Levenshtein Distance Matrices/levenshtein_averages.csv"):
-        averages = defaultdict(list)
-        with open("CSV Files/Levenshtein Distance Matrices/levenshtein_averages.csv", newline="") as avg_file:
-            avg_reader = csv.reader(avg_file)
-            next(avg_reader)
-            for row in avg_reader:
-                target_letter, _, avg_distance = row
-                averages[target_letter].append(float(avg_distance))
-                    
-    # If the averages file does not exist, calculate the averages
-    else:
-        with open("CSV Files/Levenshtein Distance Matrices/levenshtein_averages.csv", "w", newline="") as avg_file:
-            avg_writer = csv.writer(avg_file)
-            avg_writer.writerow(["Target Letter", "Compared Letter", "Average Levenshtein Distance"])
+    with open("CSV Files/" + LETTER_PAIR_FILENAME, "r", newline="") as avg_file:
+        reader = csv.reader(avg_file)
+        next(reader)
+        for row in reader:
+            averages.append(row)
 
-        for l1 in string.ascii_uppercase:
-            for l2 in tqdm(string.ascii_uppercase, total = 26, desc=f"Calculating {l1}-Word Distances", unit=" letter"):
-                filename = f"CSV Files/Levenshtein Distance Matrices/levenshtein_matrix_{l1}_{l2}.csv"  
-                distances = []
-                with open(filename, newline="") as f:
-                    reader = csv.reader(f)
-                    next(reader)  # skip header
-                    for row in reader:
-                        _, _, dist = row
-                        distances.append(float(dist))
-
-                    if distances:
-                        averages[l1].append(np.mean(distances))
-
-                    # Write the average to a file
-                    with open("CSV Files/Levenshtein Distance Matrices/levenshtein_averages.csv", "a", newline="") as avg_file:
-                        avg_writer = csv.writer(avg_file)
-                        avg_writer.writerow([l1, l2, np.mean(distances) if distances else 0.0])
+    
 
     x_labels = np.arange(len(letters))
     width = 1.0/(52.0)
@@ -975,9 +992,11 @@ def main():
 
     choices = {
         '1': "Generate Distance Matrices",
-        '2': "Find Best Randomized Trial",
-        '3': "Plot Graph",
-        '4': "Plot Levenshtein Bar Graph"
+        '2': "Generate Letter Pair Averages",
+        '3': "Find Best Randomized Trial",
+        '4': "Plot Graph",
+        '5': "Plot Levenshtein Bar Graph",
+        '6': "Create Gephi File"
     }
 
     log_console_header("Best Phonetic Alphabet Utility")
@@ -1000,6 +1019,8 @@ def main():
         print("---------------------------------")
         log_console_header("Generating CSV Distance Matrices")
         write_distance_matrix_csv(PHONEME_DICT, PHONEME_DISTANCE_DICT, WORDS_BY_LETTER)
+    elif choice == "Generate Letter Pair Averages":
+        write_distance_averages_csv()
     elif choice == "Find Best Randomized Trial":
         log_console_header("Finding Best Phonetic Alphabet via Randomized Trial")
         best_scores = find_best_set_randomized(PHONEME_DICT, PHONEME_DISTANCE_DICT, WORDS_BY_LETTER, TRIALS)
@@ -1014,6 +1035,8 @@ def main():
     elif choice == "Plot Levenshtein Bar Graph":
         log_console_header("Plotting Levenshtein Bar Graph")
         plot_a_word_levenshtein_bargraph()
+    elif choice == "Create Gephi File":
+        export_scored_graph_to_gexf(WORDS_BY_LETTER, PHONEME_DICT, PHONEME_DISTANCE_DICT, max_per_group=500)
     else:
         print("Exiting Program.")
 
