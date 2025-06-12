@@ -7,6 +7,7 @@ import itertools
 import json
 import string
 import time
+from webbrowser import get
 import igraph as ig
 import matplotlib, matplotlib.pyplot as plt
 from collections import defaultdict
@@ -14,6 +15,7 @@ import concurrent.futures
 import glob
 
 import numpy as np
+from regex import W
 from tqdm import tqdm
 
 import nltk
@@ -704,8 +706,8 @@ def get_phoneme_distance_dict():
     distance = defaultdict(float)
     for i, p1 in enumerate(phonemes):
         coord1 = PHONEME_COORDINATES[p1]
-        distance[(p1, "")] = math.sqrt(sum(a ** 2 for a in coord1))
-        distance[("", p1)] = math.sqrt(sum(a ** 2 for a in coord1))
+        distance[(p1, "")] = math.sqrt(sum (a ** 2 for a in coord1))
+        distance[("", p1)] = math.sqrt(sum (a ** 2 for a in coord1))
         distance[(p1, p1)] = 0.0
         
         for j, p2 in enumerate(phonemes):
@@ -734,7 +736,6 @@ def get_phoneme_distance_dict():
     
     # Return the distance dictionary 
     return distance
-
 
 # Clean the CMU Pronouncing Dictionary and apply filters.
 def get_cleaned_cmu_dict():
@@ -782,6 +783,52 @@ def get_cleaned_cmu_dict():
     logging.info("CMU Pronouncing Dictionary Cleaned | Total Words: %d", len(cleaned_dict))
 
     return cleaned_dict
+
+# Get words grouped by their first letter from the cleaned CMU dictionary.
+def get_words_data(cmu_dict):
+    words_by_letter = defaultdict(list)
+    words_by_length = defaultdict(list)
+    words_by_phoneme_length = defaultdict(list)
+    words_by_syllable = defaultdict(list)
+    
+    # Populate the words_by_letter dictionary
+    for word in tqdm(cmu_dict.keys(), desc="Grouping Words by First Letter", unit="word"):
+        first_letter = word[0].upper()
+        length = len(word)
+        phoneme_length = len(cmu_dict[word][0])
+        syllable_count = len([p for p in cmu_dict[word][0] if p[-1].isdigit()])  # Count syllables based on stress markers
+
+        # Add the word to the appropriate lists
+        # Only add words that start with an alphabetic character
+        if first_letter.isalpha():
+            words_by_letter[first_letter].append(word)
+        words_by_length[length].append(word)
+        words_by_phoneme_length[phoneme_length].append(word)
+        words_by_syllable[syllable_count].append(word)
+
+    # Sort each letter's word list alphabetically
+    for letter in words_by_letter:
+        words_by_letter[letter].sort()
+
+    logging.info("Words Data Collected | Words grouped by Letter, Length, Phoneme Length, and Syllable")
+
+    return words_by_letter, words_by_length, words_by_phoneme_length, words_by_syllable
+
+def get_words_by_length(cmu_dict):
+    words_by_length = defaultdict(list)
+    
+    # Populate the words_by_length dictionary
+    for word in tqdm(cmu_dict.keys(), desc="Grouping Words by Length", unit="word"):
+        length = len(word)
+        words_by_length[length].append(word)
+
+    # Sort each length's word list alphabetically
+    for length in words_by_length:
+        words_by_length[length].sort()
+
+    logging.info("Words Grouped by Length | Total Lengths: %d", len(words_by_length))
+    
+    return words_by_length
 
 # -------------------------------
 # UTILITY FUNCTIONS
@@ -918,7 +965,82 @@ def plot_graph(spring_factor = 0.15, iters = 50, max_distance = 2.0):
     fig.write_html(f"cluster_graph_iter_{iters}_score_range_{max_distance}.html")
     fig.show()
 
+"""
+Plots 4 bar graphs:
+1. Number of words in each letter group (A-Z)
+2. Number of words for each word length
+3. Number of words for each phoneme length
+4. Number of words for each syllable count
+"""
+def plot_dictionary_stats(words_by_letter, words_by_length, words_by_phoneme_length, words_by_syllable):
+    fig, axs = plt.subplots(2, 2, figsize=(16, 10))
+    plt.subplots_adjust(hspace=0.4, wspace=0.3)
 
+    # 1. Words per letter group
+    letters = sorted(words_by_letter.keys())
+    counts = [len(words_by_letter[l]) for l in letters]
+    bars = axs[0, 0].bar(letters, counts, color='tab:blue')
+    axs[0, 0].set_title("Number of Words by First Letter")
+    axs[0, 0].set_xlabel("First Letter")
+    axs[0, 0].set_ylabel("Word Count")
+    # Add count labels
+    for bar in bars:
+        height = bar.get_height()
+        axs[0, 0].annotate(f'{int(height)}',
+                           xy=(bar.get_x() + bar.get_width() / 2, height),
+                           xytext=(0, 3),  # 3 points vertical offset
+                           textcoords="offset points",
+                           ha='center', va='bottom', fontsize=9)
+
+    # 2. Words per word length
+    lengths = sorted(words_by_length.keys())
+    length_counts = [len(words_by_length[l]) for l in lengths]
+    bars = axs[0, 1].bar(lengths, length_counts, color='tab:orange')
+    axs[0, 1].set_title("Number of Words by Word Length")
+    axs[0, 1].set_xlabel("Word Length")
+    axs[0, 1].set_ylabel("Word Count")
+    for bar in bars:
+        height = bar.get_height()
+        axs[0, 1].annotate(f'{int(height)}',
+                           xy=(bar.get_x() + bar.get_width() / 2, height),
+                           xytext=(0, 3),
+                           textcoords="offset points",
+                           ha='center', va='bottom', fontsize=9)
+
+    # 3. Words per phoneme length
+    phoneme_lengths = sorted(words_by_phoneme_length.keys())
+    phoneme_counts = [len(words_by_phoneme_length[l]) for l in phoneme_lengths]
+    bars = axs[1, 0].bar(phoneme_lengths, phoneme_counts, color='tab:green')
+    axs[1, 0].set_title("Number of Words by Phoneme Length")
+    axs[1, 0].set_xlabel("Phoneme Length")
+    axs[1, 0].set_ylabel("Word Count")
+    for bar in bars:
+        height = bar.get_height()
+        axs[1, 0].annotate(f'{int(height)}',
+                           xy=(bar.get_x() + bar.get_width() / 2, height),
+                           xytext=(0, 3),
+                           textcoords="offset points",
+                           ha='center', va='bottom', fontsize=9)
+
+    # 4. Words per syllable count
+    syllable_counts = sorted(words_by_syllable.keys())
+    syllable_word_counts = [len(words_by_syllable[s]) for s in syllable_counts]
+    bars = axs[1, 1].bar(syllable_counts, syllable_word_counts, color='tab:red')
+    axs[1, 1].set_title("Number of Words by Syllable Count")
+    axs[1, 1].set_xlabel("Syllable Count")
+    axs[1, 1].set_ylabel("Word Count")
+    for bar in bars:
+        height = bar.get_height()
+        axs[1, 1].annotate(f'{int(height)}',
+                           xy=(bar.get_x() + bar.get_width() / 2, height),
+                           xytext=(0, 3),
+                           textcoords="offset points",
+                           ha='center', va='bottom', fontsize=9)
+
+    plt.suptitle("Dictionary Statistics", fontsize=18)
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+    plt.savefig("dictionary_stats.png")
+    plt.show()  
 
 def plot_a_word_levenshtein_bargraph():
     
@@ -984,19 +1106,17 @@ def main():
     nltk.download('cmudict')
     nltk.download('wordnet')
 
-    PHONEME_DICT = get_cleaned_cmu_dict()
+    PHONEME_DICT = cmudict.dict() #get_cleaned_cmu_dict()
     PHONEME_DISTANCE_DICT = get_phoneme_distance_dict()
-    WORDS_BY_LETTER = defaultdict(list)
-    for word in PHONEME_DICT.keys():
-        WORDS_BY_LETTER[word[0].upper()].append(word)
+    WORDS_BY_LETTER, WORDS_BY_LENGTH, WORDS_BY_PHONEME_LENGTH, WORDS_BY_SYLLABLE = get_words_data(PHONEME_DICT)
 
     choices = {
         '1': "Generate Distance Matrices",
         '2': "Generate Letter Pair Averages",
         '3': "Find Best Randomized Trial",
         '4': "Plot Graph",
-        '5': "Plot Levenshtein Bar Graph",
-        '6': "Create Gephi File"
+        '5': "Plot Dictionary Stats",
+        '7': "Create Gephi File"
     }
 
     log_console_header("Best Phonetic Alphabet Utility")
@@ -1032,11 +1152,11 @@ def main():
     elif choice == "Plot Graph":
         log_console_header("Plotting Cluster Graph")
         plot_graph(spring_factor=SPRING_FACTOR, iters=ITERATIONS, max_distance=MAX_DISTANCE)
-    elif choice == "Plot Levenshtein Bar Graph":
-        log_console_header("Plotting Levenshtein Bar Graph")
-        plot_a_word_levenshtein_bargraph()
+    elif choice == "Plot Dictionary Stats":
+        log_console_header("Plotting Dictionary Stats")
+        plot_dictionary_stats(WORDS_BY_LETTER, WORDS_BY_LENGTH, WORDS_BY_PHONEME_LENGTH, WORDS_BY_SYLLABLE)
     elif choice == "Create Gephi File":
-        export_scored_graph_to_gexf(WORDS_BY_LETTER, PHONEME_DICT, PHONEME_DISTANCE_DICT, max_per_group=500)
+        export_scored_graph_to_gexf(WORDS_BY_LETTER, PHONEME_DICT, PHONEME_DISTANCE_DICT, max_per_group=100)
     else:
         print("Exiting Program.")
 
