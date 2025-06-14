@@ -50,5 +50,6 @@
         "ylabel",
         "ylim",
         "zeroline"
-    ]
+    ],
+    "python.REPL.enableREPLSmartSend": false
 }
