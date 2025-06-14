@@ -3,19 +3,12 @@ import csv
 import math
 import random
 import logging
-import itertools
-import json
 import string
-import time
-from webbrowser import get
-import igraph as ig
-import matplotlib, matplotlib.pyplot as plt
+import matplotlib.pyplot as plt
 from collections import defaultdict
 import concurrent.futures
-import glob
 
 import numpy as np
-from regex import W
 from tqdm import tqdm
 
 import nltk
@@ -26,6 +19,15 @@ import editdistance
 
 import plotly.graph_objects as go
 import networkx as nx
+
+import pandas as pd
+import seaborn as sns
+from collections import Counter
+
+from pydub import AudioSegment
+from pydub.silence import split_on_silence
+import librosa
+import soundfile as sf
 
 # 🔧 CONFIGURATION
 logging.basicConfig(
@@ -1042,43 +1044,131 @@ def plot_dictionary_stats(words_by_letter, words_by_length, words_by_phoneme_len
     plt.savefig("dictionary_stats.png")
     plt.show()  
 
-def plot_a_word_levenshtein_bargraph():
-    
-    letters = sorted(string.ascii_uppercase)
-    averages = defaultdict()
-    
-    with open("CSV Files/" + LETTER_PAIR_FILENAME, "r", newline="") as avg_file:
-        reader = csv.reader(avg_file)
-        next(reader)
-        for row in reader:
-            averages.append(row)
+def visualize_word_length_distribution(words_by_letter):
+    """
+    Visualize the distribution of word lengths for each letter group in words_by_letter.
+    Shows both a heatmap and a grouped bar chart.
+    """
+    # Count word lengths for each letter
+    length_counts_by_letter = {}
+    for letter, words in words_by_letter.items():
+        lengths = [len(word) for word in words]
+        length_counts_by_letter[letter] = Counter(lengths)
 
-    
+    # Find all unique word lengths
+    all_lengths = set()
+    for counts in length_counts_by_letter.values():
+        all_lengths.update(counts.keys())
+    all_lengths = sorted(all_lengths)
 
-    x_labels = np.arange(len(letters))
-    width = 1.0/(52.0)
-    multiplier = 0.0
-    
-    fig, ax = plt.subplots(layout = "constrained")
-    
-    for attr, mean in averages.items():
-        offset = width * multiplier
-        rects = ax.bar(x_labels + offset, mean, width=width, label=f"[{attr}]", color=matplotlib.cm.tab20(multiplier / 26.0))
-        ax.bar_label(rects, padding=2, fmt='%.4f', fontsize=6, color='black', rotation=90, label_type='edge')
-        multiplier += 1.0
-    
-    ax.set_title("Average Levenshtein Distance: [A]-Letter vs. [X]-Letter Words")
-    ax.set_xlabel("Target Letter")
-    ax.set_ylabel("Average Levenshtein Distance")
-    
-    ax.set_xticks(x_labels + width, letters)
-    ax.set_xticklabels(letters, rotation=45)
-    ax.set_ylim(min(min(averages[l]) for l in letters) - 0.05, max(max(averages[l]) for l in letters) + 0.25)
-    ax.legend(loc='lower left', ncols=7, title="Target Letter")
-    
-    #plt.tight_layout()
-    plt.savefig("levenshtein_bargraph.png")
+    # Build DataFrame: rows=word lengths, columns=letters
+    df = pd.DataFrame(
+        {letter: [length_counts_by_letter[letter].get(l, 0) for l in all_lengths] for letter in words_by_letter},
+        index=all_lengths
+    )
+    df.index.name = "Word Length"
+
+    # Plot heatmap
+    plt.figure(figsize=(16, 6))
+    sns.heatmap(df.T, cmap="Blues", annot=True, fmt="d")
+    plt.title("Word Length Distribution by Letter (Heatmap)")
+    plt.xlabel("Word Length")
+    plt.ylabel("Starting Letter")
+    plt.tight_layout()
     plt.show()
+
+    # Plot grouped bar chart
+    df.T.plot(kind="bar", stacked=False, figsize=(16, 6))
+    plt.title("Word Length Distribution by Letter (Bar Chart)")
+    plt.xlabel("Starting Letter")
+    plt.ylabel("Count")
+    plt.legend(title="Word Length")
+    plt.tight_layout()
+    plt.show()
+
+
+# ----------------------------
+# AUDIO ANALYSIS FUNCTIONS
+# ----------------------------
+
+def estimate_silence_threshold(audio, sample_length_ms=100):
+    samples = [audio[i:i+sample_length_ms].dBFS for i in range(0, len(audio), sample_length_ms)]
+    quiet_samples = [s for s in samples if s != float('-inf')]
+    return min(quiet_samples) - 5 if quiet_samples else -40
+
+def normalize_to_target(chunk, target_dBFS=-20.0):
+    change_in_dBFS = target_dBFS - chunk.dBFS
+    return chunk.apply_gain(change_in_dBFS)
+
+def segment_phoneme_sessions(folder_path="Phoneme Voice Files", min_silence_len=10):
+    for filename in tqdm(os.listdir(folder_path), desc="Processing Phoneme Audio Files", unit="file", colour="blue"):
+        if not filename.lower().endswith(".wav"):
+            continue
+
+        phoneme = os.path.splitext(filename)[0].upper()
+        file_path = os.path.join(folder_path, filename)
+
+        try:
+            audio = AudioSegment.from_wav(file_path)
+            silence_thresh = estimate_silence_threshold(audio)
+
+            chunks = split_on_silence(
+                audio,
+                min_silence_len=min_silence_len,
+                silence_thresh=-40,
+                keep_silence=5,
+                seek_step=1
+            )
+
+            if not chunks:
+                print(f"⚠️ No utterances detected for {phoneme}")
+                continue
+
+            out_dir = os.path.join(folder_path, phoneme)
+            os.makedirs(out_dir, exist_ok=True)
+
+            for i, chunk in tqdm(enumerate(chunks, 1), desc=f"Segmenting {phoneme} | Auto Silence Threshold {silence_thresh:.2f} dBFS", unit="segment", leave=False, colour="green"):
+                normalized_chunk = normalize_to_target(chunk)
+                out_path = os.path.join(out_dir, f"{phoneme}_{i:02d}.wav")
+                normalized_chunk.export(out_path, format="wav")
+
+        except Exception as e:
+            print(f"❌ Error processing {filename}: {e}")
+
+def create_average_phoneme_waveforms(base_folder="Phoneme Voice Files", target_sr=22050, output_filename="average.wav"):
+    """
+    For each phoneme folder inside base_folder, loads all .wav files,
+    aligns and averages them, and writes the average waveform to average.wav.
+    """
+    for phoneme in tqdm(sorted(os.listdir(base_folder)), desc="Processing Phoneme Averages", unit="folder", colour="blue"):
+        folder = os.path.join(base_folder, phoneme)
+        if not os.path.isdir(folder):
+            continue
+
+        wav_files = sorted([f for f in os.listdir(folder) if f.endswith(".wav")])
+        if not wav_files:
+            print(f"⚠️ No WAV files found in {folder}")
+            continue
+
+        waveforms = []
+        max_length = 0
+
+        for f in tqdm(wav_files, desc=f"Loading {phoneme} samples", unit="file", colour="green"):
+            file_path = os.path.join(folder, f)
+            y, sr = librosa.load(file_path, sr=target_sr)
+            y = librosa.util.normalize(y)
+            waveforms.append(y)
+            max_length = max(max_length, len(y))
+
+        # Pad all waveforms to max length
+        padded = [np.pad(w, (0, max_length - len(w)), mode='constant') for w in waveforms]
+
+        # Compute the average waveform
+        avg_waveform = np.mean(padded, axis=0)
+
+        # Write the average to a new .wav file
+        out_path = os.path.join(folder, phoneme + "_" + output_filename)
+        sf.write(out_path, avg_waveform, target_sr)
 
 # -----------------------------
 # 🚀 MAIN LOGIC
@@ -1116,7 +1206,10 @@ def main():
         '3': "Find Best Randomized Trial",
         '4': "Plot Graph",
         '5': "Plot Dictionary Stats",
-        '7': "Create Gephi File"
+        '6': "Plot Stats 2",
+        '7': "Create Gephi File",
+        '8': "Split Phoneme Audio Takes",
+        '9': "Create Average Phoneme Audio Files",
     }
 
     log_console_header("Best Phonetic Alphabet Utility")
@@ -1155,8 +1248,14 @@ def main():
     elif choice == "Plot Dictionary Stats":
         log_console_header("Plotting Dictionary Stats")
         plot_dictionary_stats(WORDS_BY_LETTER, WORDS_BY_LENGTH, WORDS_BY_PHONEME_LENGTH, WORDS_BY_SYLLABLE)
+    elif choice == "Plot Stats 2":
+        visualize_word_length_distribution(WORDS_BY_LETTER)
     elif choice == "Create Gephi File":
         export_scored_graph_to_gexf(WORDS_BY_LETTER, PHONEME_DICT, PHONEME_DISTANCE_DICT, max_per_group=100)
+    elif choice == "Split Phoneme Audio Takes":
+        segment_phoneme_sessions()
+    elif choice == "Create Average Phoneme Audio Files":
+        create_average_phoneme_waveforms()
     else:
         print("Exiting Program.")
 
