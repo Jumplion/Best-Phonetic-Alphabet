@@ -197,3 +197,4 @@ cython_debug/
 *.html
 *.json
 *.gexf
+Word Voicings/

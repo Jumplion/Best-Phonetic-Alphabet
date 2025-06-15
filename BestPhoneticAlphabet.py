@@ -436,8 +436,7 @@ def _score_candidate(selected_words, p_dict, p_distance_dict, p_audio_dist_dict,
 
             total_levenshtein += editdistance.eval(w1, w2)
             total_phoneme_distance += sum(p_distance_dict.get((ph1, ph2), 1) for ph1, ph2 in zip(p1, p2))
-            #total_phoneme_audio_dist += sum(p_audio_dist_dict.get((ph1, ph2), 1) for ph1, ph2 in zip(p1, p2))
-            #total_phoneme_audio_dist += sum(p_audio_dist_dict.get(ph_tuple, 0.0))
+            total_phoneme_audio_dist += sum(p_audio_dist_dict.get((ph1, ph2), 1) for ph1, ph2 in zip(p1, p2))
 
             # Shared phoneme sub-sequences (n-grams)
             ngram_max = min(len(p1), len(p2))
@@ -464,7 +463,7 @@ def _score_candidate(selected_words, p_dict, p_distance_dict, p_audio_dist_dict,
     # Normalizations
     lev_norm = (total_levenshtein - 1.0) / 9.0  # Normalized to [0-1] scale (1 is best, 0 is worst) [9.0 is avg]
     phon_norm = total_phoneme_distance / 15.68  # Normalized to [0-1] scale (1 is best, 0 is worst) [15.68 avg]
-    audio_norm = total_phoneme_audio_dist / 15.68  # Normalized to [0-1] scale (1 is best, 0 is worst) [15.68 avg] # NOTE: Should get the value it's being divided by
+    audio_norm = total_phoneme_audio_dist / 1000  # Normalized to [0-1] scale (1 is best, 0 is worst) [1000 avg] # NOTE: Should get the value it's being divided by
     seq_norm = shared_sequence_penalty / 36.0   # 36 is max pairs in 9 phonemes
     suffix_norm = shared_suffix_penalty / 36.0  # 36 is max pairs in 9 phonemes
     rhyme_norm = rhyme_penalty / 25.0           # 25 is max pairs in 26 words
@@ -612,7 +611,7 @@ def write_distance_matrix_csv(p_dict, p_distance_dict, p_audio_dist_dict, words_
 
                     # Calculate distances for each word pair
                     for w1, w2 in tqdm(pairs, total=len(pairs), desc=f"Calculating and Writing to CSV: {l1}_{l2}", unit=" word pair", leave=False, colour="yellow"):
-                        data = _score_candidate([w1, w2], p_dict, p_distance_dict)                  
+                        data = _score_candidate([w1, w2], p_dict, p_distance_dict, p_audio_dist_dict)                  
                         p1, p2 = p_dict[w1][0], p_dict[w2][0]
                         # Write the data to the main CSV file   
                         writer.writerow([w1, w2, data["score"],
@@ -695,7 +694,7 @@ def export_scored_graph_to_gexf(word_groups, p_dict, p_distance_dict, p_audio_di
                 for w2 in trimmed_groups[letters[j]]:
                     try:
                         c = [w1, w2]
-                        score = _score_candidate(c, p_dict, p_distance_dict)["score"]
+                        score = _score_candidate(c, p_dict, p_distance_dict, p_audio_dist_dict)["score"]
                         weight = max(epsilon, 1 / (score + epsilon))
                         G.add_edge(w1, w2, raw_score=score, weight=weight)
                     except Exception as e:
@@ -740,6 +739,13 @@ def read_distance_matrix(target_letter, compare_letter):
             }
 
     return distance_dict
+
+
+def synthesize_words(p_dict):
+    for word in tqdm(p_dict, total=len(p_dict), desc="Synthesizing Words", unit=" word"):     
+        p_list = normalize_phoneme(p_dict[word][0])
+        synthesize_word_audio(word, p_list)
+
 
 # -------------------------------
 # Dictionary Functions
@@ -786,7 +792,7 @@ def get_phoneme_distance_dict():
     # Return the distance dictionary 
     return distance
 
-def get_phoneme_audio_difference_dict(base_folder="Phoneme Voice Files", target_sr=22050):
+def get_phoneme_audio_difference_dict(base_folder="Phoneme Voice Files", target_sr=22050, phoneme_file_template="_normalized.wav"):
     """
     Computes a full pairwise DTW distance matrix between medoid phoneme wav files.
     Returns:
@@ -809,7 +815,7 @@ def get_phoneme_audio_difference_dict(base_folder="Phoneme Voice Files", target_
     waveforms = {}
 
     for ph in phonemes:
-        path = os.path.join(base_folder, ph, ph + "_medoid.wav")
+        path = os.path.join(base_folder, ph, f"{ph}{phoneme_file_template}")
         if not os.path.exists(path):
             logging.warning("Medoid waveform not found for phoneme: %s", ph)
             continue
@@ -1241,7 +1247,7 @@ def find_medoid_phoneme_recordings(base_folder="Phoneme Voice Files", target_sr=
             continue
 
         wav_files = sorted([f for f in os.listdir(folder) if 
-                            f.endswith(".wav") and not f.endswith(output_filename) and not f.endswith("average.wav")])
+                            f.endswith(".wav") and not f.endswith(output_filename) and not f.endswith("average.wav") and not f.endswith("median.wav")])
 
         if not wav_files:
             print(f"⚠️ No WAV files found in {folder}")
@@ -1274,6 +1280,73 @@ def find_medoid_phoneme_recordings(base_folder="Phoneme Voice Files", target_sr=
         best_wave = waveforms[best_idx]
         sf.write(os.path.join(folder, phoneme + "_" + output_filename), best_wave, target_sr)
 
+
+def normalize_phoneme_durations(base_folder="Phoneme Voice Files", 
+                                 target_duration=0.175,  # in seconds
+                                 target_sr=22050,
+                                 input_filename="_medoid.wav",
+                                 output_filename="_normalized.wav"):
+    """
+    Resamples each phoneme's medoid.wav to match a fixed duration (default: 0.2 seconds).
+    Saves result as normalized.wav in the same folder.
+    """
+    for phoneme in PHONEME_COORDINATES.keys():
+        folder = os.path.join(base_folder, phoneme)
+        in_path = os.path.join(folder, f"{phoneme}{input_filename}")
+        out_path = os.path.join(folder, f"{phoneme}{output_filename}")
+
+        if not os.path.isfile(in_path):
+            print(f"❌ Missing {phoneme}{input_filename} for {phoneme}")
+            continue
+
+        y, sr = librosa.load(in_path, sr=target_sr)
+        duration = librosa.get_duration(y=y, sr=sr)
+        stretch_factor = duration / target_duration
+
+        # Skip if already within ~5% of target duration
+        if 0.95 <= stretch_factor <= 1.05:
+            print(f"⏩ Skipping {phoneme} (already ~{duration:.2f}s)")
+            sf.write(out_path, y, sr)
+            continue
+
+        # Time-stretch to match target duration
+        y_stretched = librosa.effects.time_stretch(y, rate=stretch_factor)
+        sf.write(out_path, y_stretched, sr)
+
+"""
+Synthesizes a word audio file by concatenating medoid phoneme .wav files.
+
+Parameters:
+- word: the word string (e.g. "apple")
+- phonemes: list of ARPAbet phonemes (e.g. ["AE", "P", "AH", "L"])
+- phoneme_folder: where medoid.wav files are stored (subfolders by phoneme)
+- output_base: base folder to write word .wav file into
+"""
+def synthesize_word_audio(word, phoneme_list, phoneme_folder="Phoneme Voice Files", output_base="Word Voicings", phoneme_file_suffix="_normalized.wav"):
+    """
+    Given a word, its phoneme list, and a directory of phoneme .wav files,
+    combine the phoneme audio files to create [word].wav in Word Voicings/[Letter]/.
+    """
+    # Ensure output directory exists
+    letter = word[0].upper()
+    output_dir = os.path.join(output_base, letter)
+    os.makedirs(output_dir, exist_ok=True)
+    output_path = os.path.join(output_dir, f"{word}.wav")
+
+    # Combine phoneme audio files
+    combined = AudioSegment.silent(duration=0)
+    for ph in phoneme_list:
+        ph_folder = os.path.join(phoneme_folder, ph)
+        ph_file = os.path.join(ph_folder, f"{ph}{phoneme_file_suffix}")
+        if not os.path.exists(ph_file):
+            print(f"Warning: Phoneme audio file not found: {ph_file}")
+            continue
+        ph_audio = AudioSegment.from_wav(ph_file)
+        combined += ph_audio
+
+    # Export the combined audio
+    combined.export(output_path, format="wav")
+    return output_path
 
 def plot_phoneme_distance_matrix(matrix, labels, title="Phoneme Difference Matrix"):
     plt.figure(figsize=(14, 12))
@@ -1329,7 +1402,6 @@ MAX_DISTANCE = 3.0        # Maximum distance between nodes in the graph layout
 def main():
     
     log_console_header("Loading and Cleaning CMU Dictionary")
-
     # Load the CMU Pronouncing Dictionary and create the phoneme distance dictionary
     nltk.download('cmudict')
     nltk.download('wordnet')
@@ -1350,7 +1422,8 @@ def main():
         '8': "Split Phoneme Audio Takes",
         '9': "Create Average Phoneme Audio Files",
         '10': "Create and Plot Phoneme Audio Distance",
-        '11': "Score Premade Alphabets"
+        '11': "Score Premade Alphabet",
+        '12': "Synthesize Word Audio"
     }
 
     log_console_header("Best Phonetic Alphabet Utility")
@@ -1402,14 +1475,16 @@ def main():
         plot_phoneme_distance_matrix(matrix, labels)
         plot_phoneme_dendrogram(matrix, labels)
         plot_mds(matrix, labels)
-    elif choice == "Score Premade Alphabets":
+    elif choice == "Score Premade Alphabet":
         NATO = [w for w in NATO_PHONETIC_ALPHABET if w in PHONEME_DICT]
-        best_scores = find_best_set_randomized(PHONEME_DICT, PHONEME_DISTANCE_DICT, PHONEME_AUDIO_DISTANCE_DICT, WORDS_BY_LETTER, TRIALS, preselected_words = NATO)
-        # Log best sets
-        log_scores("Levenshtein Distance", best_scores['levenshtein'], PHONEME_DICT)
-        log_scores("Phoneme Distance", best_scores['phoneme'], PHONEME_DICT)
-        log_scores("Shared Phoneme Sequence Count", best_scores['seq'], PHONEME_DICT)
-        log_scores("Overall", best_scores['score'], PHONEME_DICT)
+        best_scores = _score_candidate(NATO, PHONEME_DICT, PHONEME_DISTANCE_DICT, PHONEME_AUDIO_DISTANCE_DICT)
+        logging.info("--------------------------------")
+        logging.info(f"NATO Score ({best_scores['score']:,.2f}):")
+        logging.info("--------------------------------")
+        for word in NATO:
+            logging.info("%-8s  ->  %s", word.capitalize(), ' '.join(PHONEME_DICT[word][0]))
+    elif choice == "Synthesize Word Audio":
+        synthesize_words(PHONEME_DICT)
     else:
         print("Exiting Program.")
 
