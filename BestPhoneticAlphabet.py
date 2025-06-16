@@ -5,7 +5,7 @@ import random
 import logging
 import json
 import string
-from collections import defaultdict, Counter
+from collections import defaultdict
 import concurrent.futures
 
 # Scientific and Data Libraries
@@ -336,11 +336,11 @@ Generate candidate words based on input letters and preselected words.
 def candidate_gen(trials, letters, words_by_letter, preselected_by_letter=None):
     for _ in range(trials):
         candidate = []
-        for l in letters:
-            if l in preselected_by_letter:
-                candidate.append(preselected_by_letter[l])
-            elif words_by_letter[l]:
-                candidate.append(random.choice(words_by_letter[l]))
+        for le in letters:
+            if le in preselected_by_letter:
+                candidate.append(preselected_by_letter[le])
+            elif words_by_letter[le]:
+                candidate.append(random.choice(words_by_letter[le]))
         if len(candidate) == len(letters):
             yield candidate
 
@@ -372,7 +372,7 @@ Scores a candidate set of words using:
         - Rhyme penalty
     ) x 100 for scaling
 """
-def _score_candidate(selected_words, p_dict, p_distance_dict, p_audio_dist_dict, phoneme_suffix_length=2):
+def _score_candidate(selected_words, p_dict, p_distance_dict, p_audio_dist_dict, phoneme_suffix_length=2, weights=None):
     total_levenshtein = total_phoneme_distance = total_phoneme_audio_dist = 0
     shared_sequence_penalty = shared_suffix_penalty = 0
     rhyme_penalty = 0
@@ -464,14 +464,14 @@ def _score_candidate(selected_words, p_dict, p_distance_dict, p_audio_dist_dict,
     consonant_norm = len(consonant_set) / len(consonants)   # Consonant diversity bonus/penalty [0-1 scale]
 
     # Weights
-    WEIGHT_LEVENSHTEIN = 1.0
-    WEIGHT_PHONEME = 1.0
-    WEIGHT_SHARED_SEQ = 2.0
-    WEIGHT_SHARED_SUFFIX = 2.0
-    WEIGHT_RHYME = 2.0
-    WEIGHT_VOWEL_DIVERSITY = 1.0
-    WEIGHT_CONSONANT_DIVERSITY = 1.0
-    WEIGHT_AUDIO_DIVERSITY = 1.0
+    WEIGHT_LEVENSHTEIN =            weights["weight_levenshtein"] if weights is not None           else 1.0
+    WEIGHT_PHONEME =                weights["weight_phoneme"] if weights is not None               else 1.0
+    WEIGHT_SHARED_SEQ =             weights["weight_shared_seq"] if weights is not None            else 2.0
+    WEIGHT_SHARED_SUFFIX =          weights["weight_shared_suffix"] if weights is not None         else 2.0
+    WEIGHT_RHYME =                  weights["weight_rhyme"] if weights is not None                 else 2.0
+    WEIGHT_VOWEL_DIVERSITY =        weights["weight_vowel_diversity"] if weights is not None       else 1.0
+    WEIGHT_CONSONANT_DIVERSITY =    weights["weight_consonant_diversity"] if weights is not None   else 1.0
+    WEIGHT_AUDIO_DIVERSITY =        weights["weight_audio_diversity"] if weights is not None       else 1.0
 
     score = (
         (WEIGHT_LEVENSHTEIN * lev_norm)
@@ -520,8 +520,8 @@ def find_best_set_randomized(p_dict, p_distance_dict, p_audio_dist_dict, words_b
     preselected_by_letter = {}
     if preselected_words:
         for w in preselected_words:
-            l = w[0].upper()
-            preselected_by_letter[l] = min(preselected_by_letter[l], w) if l in preselected_by_letter else w
+            le = w[0].upper()
+            preselected_by_letter[le] = min(preselected_by_letter[le], w) if le in preselected_by_letter else w
 
     headers = ["Score", "Total Levenshtein Distance", "Total Phoneme Distance", 
             "Total Shared Sequences", "Total Shared Suffixes"] + list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
@@ -1031,8 +1031,6 @@ def main():
         logging.info("--------------------------------")
         for word in NATO:
             logging.info("%-8s  ->  %s", word.capitalize(), ' '.join(PHONEME_DICT[word][0]))
-    elif choice == "Synthesize Word Audio":
-        synthesize_words(PHONEME_DICT)
     else:
         print("Exiting Program.")
 
