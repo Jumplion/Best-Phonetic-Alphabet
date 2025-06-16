@@ -1,0 +1,12 @@
+{
+    "min_phoneme_length": 2,
+    "max_phoneme_length": 10,
+    "min_word_length": 3,
+    "max_word_length": 10,
+    "min_syllables": 2,
+    "max_syllables": 3,
+    
+    "trials": 10000,
+    "penalize_length_variance": true,
+    "length_variance_weight": 10
+}

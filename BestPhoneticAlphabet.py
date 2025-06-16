@@ -3,36 +3,42 @@ import csv
 import math
 import random
 import logging
+import json
 import string
-import matplotlib.pyplot as plt
-from collections import defaultdict
-import concurrent.futures
+import warnings
+from collections import defaultdict, Counter
 
+# Scientific and Data Libraries
 import numpy as np
+import pandas as pd
 from tqdm import tqdm
 
+# NLP Libraries
 import nltk
 from nltk.corpus import cmudict, wordnet
 from nltk.stem import WordNetLemmatizer
 
+# Distance and Edit Libraries
 import editdistance
+from fastdtw import fastdtw
 
+# Plotting and Visualization
+import matplotlib.pyplot as plt
+import seaborn as sns
 import plotly.graph_objects as go
+
+# Graph Libraries
 import networkx as nx
 
-import pandas as pd
-import seaborn as sns
-from collections import Counter
-
+# Audio Processing
 from pydub import AudioSegment, effects
 from pydub.silence import split_on_silence
 import librosa
 import soundfile as sf
-from fastdtw import fastdtw
+
+# Machine Learning and Clustering
 from sklearn.manifold import MDS
 from scipy.cluster.hierarchy import linkage, dendrogram
-
-import warnings
 
 # 🔧 CONFIGURATION
 logging.basicConfig(
@@ -48,27 +54,29 @@ logging.basicConfig(
 # NOTE: Temporary fix, should properly download and integrate ffmpeg
 warnings.filterwarnings("ignore", message="Couldn't find ffmpeg or avconv*", category=RuntimeWarning)
 
-WORD_PAIR_FILENAME_TEMPLATE = "word_pairs_{0}_{1}_data.csv"
-LETTER_PAIR_FILENAME = "letter_pair_averages.csv"
-CSV_DISTANCE_HEADERS = ["Source", "Target", "Score",
+WORD_PAIR_FILENAME_TEMPLATE:str = "word_pairs_{0}_{1}_data.csv"
+LETTER_PAIR_FILENAME:str = "letter_pair_averages.csv"
+CSV_DISTANCE_HEADERS:list[str] = ["Source", "Target", "Score",
         "Source-Phonemes", "Target-Phonemes",
         "Levenshtein Distance", "Phoneme Distance", 
         "Shared Sequence Count", "Sequences",
         "Suffix Count", "Suffixes",
         "Rhyme Count", "Rhymes"]
-CSV_DISTANCE_AVERAGE_HEADERS = ["Source", "Target", "Total Word Pairs",
+CSV_DISTANCE_AVERAGE_HEADERS:list[str] = ["Source", "Target", "Total Word Pairs",
                             "Min Lev", "Max Lev", "Avg Lev", "Std Dev Lev",
                             "Min Phoneme", "Max Phoneme", "Avg Phoneme", "Std Dev Phoneme",
                             "Min Shared", "Max Shared", "Avg Shared", "Std Dev Shared",
                             "Min Score", "Max Score", "Avg Score", "Std Dev Score"]
 
-# Words that we don't want in our alphabets
-# These are words that are either offensive, inappropriate, or just don't fit the criteria
-# Some other reasons for blacklisting words:
-# - Not caught by the filters
-# - Strange pronunciations that don't fit the phonetic alphabet
-# - Words that are too similar to other words in the alphabet
-# - Slurs and racial remarks are a no-go, we diverse and tolerant in this sum-bitch
+"""
+Words that we don't want in our alphabets
+These are words that are either offensive, inappropriate, or just don't fit the criteria
+Some other reasons for blacklisting words:
+- Not caught by the filters
+- Strange pronunciations that don't fit the phonetic alphabet
+- Words that are too similar to other words in the alphabet
+- Slurs and racial remarks are a no-go, we diverse and tolerant in this sum-bitch
+"""
 WORD_BLACKLIST = [
 ]
 
@@ -76,7 +84,6 @@ WORD_WHITELIST = [
 ]
 
 # Custom words to add to the dictionary
-# These words will be added to the dictionary with their specified phonemes
 CUSTOM_WORDS = {
     "amogus": ["AH", "M", "OW", "G", "Y", "UW", "S"],
     "atrioc": ["AH", "T", "R", "IY", "AA", "K"],
@@ -190,8 +197,6 @@ NATO_PHONETIC_ALPHABET = [
     "uniform", "victor", "whiskey", "x-ray", "yankee", "zulu"
 ]
 
-
-
 # Prefixes that should not be at the start of words
 # These prefixes are often silent or not pronounced, so we filter them out
 PREFIX_FILTERS = [
@@ -207,9 +212,11 @@ PREFIX_FILTERS = [
     "wr"
 ]
 
-# Prefix filters for phonemes
-# Certain phonemes should not be at the start of words in certain letter groups
-# For example, "E" words shouldn't start with "y" like "eunuch" or "euphoria"
+"""
+Prefix filters for phonemes
+Certain phonemes should not be at the start of words in certain letter groups
+For example, "E" words shouldn't start with "y" like "eunuch" or "euphoria"
+"""
 BANNED_PHONEME_PREFIXES = {
     "a" : [],
     "b" : [],
@@ -307,16 +314,6 @@ PHONEME_DICT = defaultdict(list)
 PHONEME_DISTANCE_DICT = defaultdict()
 PHONEME_AUDIO_DISTANCE_DICT = defaultdict()
 WORDS_BY_LETTER = defaultdict(list)
-
-# -----------------------------
-# Phoneme and Word Length Options
-# -----------------------------
-MIN_PHONEME_LENGTH = 2      # Minimum number of phonemes required per word
-MAX_PHONEME_LENGTH = 10     # Maximum number of phonemes allowed per word
-MIN_WORD_LENGTH = 3         # Minimum number of letters required per word
-MAX_WORD_LENGTH = 10        # Maximum number of letters allowed per word
-MIN_SYLLABLES = 2           # Minimum number of syllables allowed per word
-MAX_SYLLABLES = 3           # Maximum number of syllables allowed per word
 
 # -----------------------------
 # 📦 FUNCTION DEFINITIONS
@@ -858,6 +855,15 @@ Clean the CMU Pronouncing Dictionary and apply filters.
 """
 def get_cleaned_cmu_dict():
 
+    # Get user settings
+    settings = load_user_settings()
+    min_phoneme_length = settings["min_phoneme_length"]
+    max_phoneme_length = settings["max_phoneme_length"]
+    min_word_length = settings["min_word_length"]
+    max_word_length = settings["max_word_length"]
+    min_syllables = settings["min_syllables"]
+    max_syllables = settings["max_syllables"]
+
     cleaned_dict = cmudict.dict()
     cleaned_dict = {
         word: prons for word, prons in tqdm(cleaned_dict.items(), desc="Cleaning CMU Dictionary", unit="word")
@@ -866,14 +872,14 @@ def get_cleaned_cmu_dict():
             (word.isalpha()) and
             (word not in WORD_BLACKLIST) and
             (not any(word.startswith(prefix) for prefix in PREFIX_FILTERS)) and
-            (len(prons[0]) >= MIN_PHONEME_LENGTH) and
-            (len(prons[0]) <= MAX_PHONEME_LENGTH) and
-            (len(word) >= MIN_WORD_LENGTH) and
-            (len(word) <= MAX_WORD_LENGTH) and
+            (len(prons[0]) >= min_phoneme_length) and
+            (len(prons[0]) <= max_phoneme_length) and
+            (len(word) >= min_word_length) and
+            (len(word) <= max_word_length) and
             (len(set(word)) > 1) and
             (not any(word.startswith(prefix) for prefix in BANNED_PHONEME_PREFIXES.get(word[0].lower(), []))) and
             (wordnet.synsets(word)) and
-            (MIN_SYLLABLES <= len([p for p in prons[0] if p[-1].isdigit()]) <= MAX_SYLLABLES)
+            (min_syllables <= len([p for p in prons[0] if p[-1].isdigit()]) <= max_syllables)
         )
     }              
 
@@ -969,24 +975,25 @@ def log_scores(list_name, set, p_dict):
 # ----------------------------
 
 """_summary_
-Estimates when an audio clip is "silent"
-"""
-def estimate_silence_threshold(audio, sample_length_ms=100):
-    samples = [audio[i:i+sample_length_ms].dBFS for i in range(0, len(audio), sample_length_ms)]
-    quiet_samples = [s for s in samples if s != float('-inf')]
-    return min(quiet_samples) - 5 if quiet_samples else -40
-
-"""_summary_
-Normalize the audio chunk to the target dBs.
-"""
-def normalize_to_target(chunk, target_dBFS=-20.0):
-    change_in_dBFS = target_dBFS - chunk.dBFS
-    return chunk.apply_gain(change_in_dBFS)
-
-"""_summary_
 Attempts to split up the main phoneme recording sessions into individual phoneme audio clips
 """
 def segment_phoneme_sessions(folder_path="Phoneme Voice Files", min_silence_len=10):
+    
+    """_summary_
+    Estimates when an audio clip is "silent"
+    """
+    def estimate_silence_threshold(audio, sample_length_ms=100):
+        samples = [audio[i:i+sample_length_ms].dBFS for i in range(0, len(audio), sample_length_ms)]
+        quiet_samples = [s for s in samples if s != float('-inf')]
+        return min(quiet_samples) - 5 if quiet_samples else -40
+    
+    """_summary_
+    Normalize the audio chunk to the target dBs.
+    """
+    def normalize_to_target(chunk, target_dBFS=-20.0):
+        change_in_dBFS = target_dBFS - chunk.dBFS
+        return chunk.apply_gain(change_in_dBFS)
+
     for filename in tqdm(os.listdir(folder_path), desc="Processing Phoneme Audio Files", unit="file", colour="blue"):
         if not filename.lower().endswith(".wav"):
             continue
@@ -1403,19 +1410,30 @@ def plot_mds(matrix, labels, dim=2):
 # -----------------------------
 # Randomization Options
 # -----------------------------
-TRIALS = 10000                   # Number of random trials
-PENALIZE_LENGTH_VARIANCE = True # Set to 'True' to penalize length variance
-LENGTH_VARIANCE_WEIGHT = 10     # Adjust this weight to control penalty severity
+
 
 # -----------------------------
 # Graphing Options
 # -----------------------------
-SPRING_FACTOR = 0.5    # Factor to control the spring force in the graph layout
-ITERATIONS = 50         # Number of iterations for the spring layout algorithm
-MAX_DISTANCE = 3.0        # Maximum distance between nodes in the graph layout
+SPRING_FACTOR:float = 0.5    # Factor to control the spring force in the graph layout
+ITERATIONS:int = 50         # Number of iterations for the spring layout algorithm
+MAX_DISTANCE:float = 3.0        # Maximum distance between nodes in the graph layout
+
+def load_user_settings(settings_path="user_settings.json"):
+    if not os.path.exists(settings_path):
+        raise FileNotFoundError(f"Settings file not found: {settings_path}")
+    with open(settings_path, "r") as f:
+        settings = json.load(f)
+    return settings
 
 def main():
-    
+
+    user_settings = load_user_settings()
+
+    TRIALS = user_settings["trials"]                                      # Number of random trials
+    PENALIZE_LENGTH_VARIANCE = user_settings["penalize_length_variance"]  # Set to 'True' to penalize length variance
+    LENGTH_VARIANCE_WEIGHT = user_settings["length_variance_weight"]      # Adjust this weight to control penalty severity
+
     log_console_header("Loading and Cleaning CMU Dictionary")
     # Load the CMU Pronouncing Dictionary and create the phoneme distance dictionary
     nltk.download('cmudict')
@@ -1449,6 +1467,7 @@ def main():
         print(f"{key}. {value}")
     
     user_input = input(f"Enter your choice ({choices.keys()}): ").strip().lower()
+    
     choice = choices[user_input] if user_input in choices else None
     if not choice:
         print("Invalid choice. Please run the program again.")
