@@ -7,6 +7,7 @@ import json
 import string
 from collections import defaultdict
 import concurrent.futures
+from datetime import datetime
 
 # Scientific and Data Libraries
 import numpy as np
@@ -27,6 +28,9 @@ import networkx as nx
 # Audio Processing
 import librosa
 
+import igraph as ig
+import leidenalg
+
 # 🔧 CONFIGURATION
 logging.basicConfig(
     level=logging.INFO,  # Change to DEBUG for more detail, WARNING for less
@@ -37,7 +41,6 @@ logging.basicConfig(
         # logging.FileHandler("phonetic_alphabet.log")
     ]
 )
-
 
 WORD_PAIR_FILENAME_TEMPLATE:str = "word_pairs_{0}_{1}_data.csv"
 LETTER_PAIR_FILENAME:str = "letter_pair_averages.csv"
@@ -302,7 +305,6 @@ PHONEME_DICT = defaultdict(list)
 PHONEME_DISTANCE_DICT = defaultdict()
 PHONEME_AUDIO_DISTANCE_DICT = defaultdict()
 WORDS_BY_LETTER = defaultdict(list)
-
 
 # --------------------------------
 # Calculation Functions
@@ -626,7 +628,7 @@ Write the average distances for each letter pair to a CSV file.
 This function reads all the CSV files in the "CSV Files" directory and calculates the averages for each letter pair.
 The results are written to a new CSV file named "letter_pair_averages.csv".
 """
-def write_distance_averages_csv():
+def write_letter_pair_averages_csv():
     
     letters = list(string.ascii_uppercase)
     avg_filename = os.path.join("CSV Files", LETTER_PAIR_FILENAME)
@@ -636,10 +638,11 @@ def write_distance_averages_csv():
         avg_writer.writerow(CSV_DISTANCE_AVERAGE_HEADERS)
 
     for l1 in tqdm(letters, total=len(letters), desc="Calculating Letter Pair Averages", unit=" letter", colour="green"):
-        l1_index = letters.index(l1)
-        # Get letters after l1 (not including l1 itself) This avoids redundant pairs like A-B and B-A
-        l2_letters = letters[l1_index + 1:] if l1_index + 1 < len(letters) else []
-        for l2 in tqdm(l2_letters, total=len(l2_letters), desc=f"Calculating {l1}-Letter Pair Averages", unit=" letter pair", leave=False, colour="yellow"):
+        for l2 in tqdm(letters, total=len(letters), desc=f"Calculating {l1}-Letter Pair Averages", unit=" letter pair", leave=False, colour="yellow"):
+            
+            if l1 == l2:
+                continue
+      
             data = {
                 "levenshtein": [],
                 "phoneme": [],
@@ -647,8 +650,9 @@ def write_distance_averages_csv():
                 "score": []
             }
             
-            word_pairs = read_distance_matrix(l1, l2)
-            for w1 in tqdm(word_pairs, total=len(word_pairs), desc=f"Processing {l1}-{l2} Word Pairs", unit=" word", leave=False, colour="red"):
+            letter1, letter2 = sorted([l1, l2])  # Sort to ensure consistent order
+            word_pairs = read_distance_matrix(letter1, letter2)
+            for w1 in tqdm(word_pairs, total=len(word_pairs), desc=f"Processing {letter1}-{letter2} Word Pairs", unit=" word", leave=False, colour="red"):
                 for w2 in word_pairs[w1]:
                     data["levenshtein"].append(word_pairs[w1][w2]["levenshtein"])
                     data["phoneme"].append(word_pairs[w1][w2]["phoneme"])
@@ -668,6 +672,60 @@ def write_distance_averages_csv():
                                     p_min, p_max, p_avg, p_std,
                                     s_min, s_max, s_avg, s_std,
                                     x_min, x_max, x_avg, x_std])
+
+def write_letter_averages_csv():
+    """
+    Write the average distances for each letter to a CSV file.
+    This function reads all the CSV files in the "CSV Files" directory and calculates the averages for each letter.
+    The results are written to a new CSV file named "letter_averages.csv".
+    """
+    letters = list(string.ascii_uppercase)
+    avg_filename = os.path.join("CSV Files", "letter_averages.csv")
+
+    with open(avg_filename, "w", newline="") as avg_file:
+        avg_writer = csv.writer(avg_file)
+        avg_writer.writerow(["Letter", 
+                            "Count",
+                            "Levenshtein Min", "Levenshtein Max", "Levenshtein Avg", "Levenshtein Std",
+                            "Phoneme Min", "Phoneme Max", "Phoneme Avg", "Phoneme Std",
+                            "Shared Min", "Shared Max", "Shared Avg", "Shared Std",
+                            "Score Min", "Score Max", "Score Avg", "Score Std"])
+
+    for l1 in tqdm(letters, total=len(letters), desc="Calculating Letter Averages", unit=" letter", colour="green"):
+        data = {
+            "levenshtein": [],
+            "phoneme": [],
+            "shared": [],
+            "score": []
+        }
+
+        for l2 in tqdm(letters, total=len(letters), desc=f"Calculating {l1}-Letter Averages", unit=" letter pair", leave=False, colour="yellow"):
+            if l1 == l2:
+                continue
+            
+            # Read the distance matrix for the letter pair (letter, l2)
+            # This will read the CSV file for the letter pair
+            letter1, letter2 = sorted([l1, l2])  # Sort to ensure consistent order
+            word_pairs = read_distance_matrix(letter1, letter2)
+            for w1 in tqdm(word_pairs, total=len(word_pairs), desc=f"Processing {l1} Word Pairs", unit=" word", leave=False, colour="red"):
+                for w2 in word_pairs[w1]:
+                    data["levenshtein"].append(word_pairs[w1][w2]["levenshtein"])
+                    data["phoneme"].append(word_pairs[w1][w2]["phoneme"])
+                    data["shared"].append(word_pairs[w1][w2]["shared"])
+                    data["score"].append(word_pairs[w1][w2]["score"])
+
+        # Write the Letter Averages and other data points to the Letter Averages CSV file
+        with open(avg_filename, "a", newline="") as avg_file:
+            avg_writer = csv.writer(avg_file)
+            l_min, l_max, l_avg, l_std = np.min(data["levenshtein"]), np.max(data["levenshtein"]), np.mean(data["levenshtein"]), np.std(data["levenshtein"])
+            p_min, p_max, p_avg, p_std = np.min(data["phoneme"]), np.max(data["phoneme"]), np.mean(data["phoneme"]), np.std(data["phoneme"])
+            s_min, s_max, s_avg, s_std = np.min(data["shared"]), np.max(data["shared"]), np.mean(data["shared"]), np.std(data["shared"])
+            x_min, x_max, x_avg, x_std = np.min(data["score"]), np.max(data["score"]), np.mean(data["score"]), np.std(data["score"])
+            avg_writer.writerow([l1, len(data["levenshtein"]),
+                                l_min, l_max, l_avg, l_std,
+                                p_min, p_max, p_avg, p_std,
+                                s_min, s_max, s_avg, s_std,
+                                x_min, x_max, x_avg, x_std])
 
 """_summary_
 Exports a Gephi-compatible .gexf graph file where:
@@ -709,6 +767,7 @@ def export_scored_graph_to_gexf(word_groups, p_dict, p_distance_dict, p_audio_di
 """_summary_
 Read a distance matrix from a CSV file and return it as a dictionary.
 This function reads a distance matrix for a specific letter pair (e.g., A-B) and returns it as a dictionary.
+
 """
 def read_distance_matrix(target_letter, compare_letter):
     filename = os.path.join("CSV Files", WORD_PAIR_FILENAME_TEMPLATE.format(target_letter, compare_letter))
@@ -953,9 +1012,86 @@ def log_scores(list_name, set, p_dict):
     for word in set[1]:
         logging.info("%-12s  ->  %s", word.capitalize(), ' '.join(p_dict[word][0]))
 
-# -----------------------------
-# 🚀 MAIN LOGIC
-# -----------------------------
+
+def visualize_word_graph_igraph(
+    words_by_letter,
+    p_dict,
+    p_distance_dict,
+    p_audio_dist_dict,
+    max_per_letter=25,
+    MIN_SCORE=600.0,
+    use_csv=False,
+    read_distance_matrix_func=None,
+    output_path="word_graph_igraph_minScore-{0}_maxPerLetter-{1}_created-{2}.png"
+):
+    """
+    Visualize a word graph using python-igraph, Distributed Recursive Layout, and Leiden community detection.
+    Saves the plot to the specified output_path.
+    """
+    # 1. Limit words per letter
+    trimmed = {l: ws[:max_per_letter] for l, ws in words_by_letter.items() if ws}
+    all_words = [w for ws in trimmed.values() for w in ws]
+    word_idx = {w: i for i, w in enumerate(all_words)}
+
+    # 2. Build edges and weights
+    edges = []
+    weights = []
+    letters = list(trimmed.keys())
+    for i, l1 in tqdm(enumerate(letters), total=len(letters), desc="Building Edges", unit=" letter", colour="blue"):
+        for l2 in tqdm(letters[i+1:], total=len(letters) - i - 1, desc=f"On {l1} Letter Pairs", unit=" letter pair", leave=False, colour="green"):
+            ws1 = trimmed[l1]
+            ws2 = trimmed[l2]
+            if use_csv:
+                if read_distance_matrix_func is None:
+                    raise ValueError("read_distance_matrix_func must be provided when use_csv=True")
+                dist_dict = read_distance_matrix_func(l1, l2)
+                for w1 in tqdm(ws1, total=len(ws1), desc=f"On {l1} Letter Words", leave=False, colour="yellow"):
+                    for w2 in ws2:
+                        if w1 in dist_dict and w2 in dist_dict[w1]:
+                            score = dist_dict[w1][w2]["score"]
+                            if score is None or score <= MIN_SCORE:
+                                continue
+                            edges.append((word_idx[w1], word_idx[w2]))
+                            weights.append(score)
+            else:
+                for w1 in ws1:
+                    for w2 in ws2:
+                        score = _score_candidate([w1, w2], p_dict, p_distance_dict, p_audio_dist_dict)["score"]
+                        if score is None or score <= 0:
+                            continue
+                        edges.append((word_idx[w1], word_idx[w2]))
+                        weights.append(score)
+
+    # 3. Build igraph graph
+    g = ig.Graph()
+    g.add_vertices(all_words)
+    g.add_edges(edges)
+    g.es["weight"] = weights
+
+    # 4. Leiden community detection
+    log_console_header("Finding Communities with Leiden Algorithm")
+    partition = leidenalg.find_partition(g, leidenalg.ModularityVertexPartition, weights="weight")
+
+    # 5. Distributed Recursive Layout
+    log_console_header("Calculating Distributed Recursive Layout")
+    layout = g.layout_drl()
+
+    # 6. Plot and save to file
+    log_console_header(f"Plotting Graph to {output_path}")
+    color_map = [partition.membership[i] for i in range(len(all_words))]
+    visual_style = {
+        "vertex_size": 15,
+        "vertex_label": all_words,
+        "vertex_color": color_map,
+        "edge_width": 1e-6,
+        "layout": layout,
+        "bbox": (1200, 900),
+        "margin": 50,
+        "target": output_path.format(MIN_SCORE, max_per_letter, datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
+    }
+    ig.plot(g, **visual_style)
+    print(f"Graph plotted and saved to {output_path} with python-igraph, DRL layout, and Leiden communities.")
+
 
 def load_user_settings(settings_path="user_settings.json"):
     if not os.path.exists(settings_path):
@@ -967,7 +1103,6 @@ def load_user_settings(settings_path="user_settings.json"):
 def main():
 
     user_settings = load_user_settings()
-
     TRIALS = user_settings["trials"]                                      # Number of random trials
 
     log_console_header("Loading and Cleaning CMU Dictionary")
@@ -984,10 +1119,11 @@ def main():
     choices = {
         '1': "Generate Distance Matrices",
         '2': "Generate Letter Pair Averages",
-        '3': "Find Best Randomized Trial",
-        '7': "Create Gephi File",
-        '11': "Score Premade Alphabet",
-        '12': "Synthesize Word Audio"
+        '3': "Generate Letter Averages",
+        '4': "Find Best Randomized Trial",
+        '5': "Create Gephi File",
+        '6': "Score Premade Alphabet",
+        '7': "Visualize Word Graph with iGraph",
     }
 
     log_console_header("Best Phonetic Alphabet Utility")
@@ -1012,7 +1148,13 @@ def main():
         log_console_header("Generating CSV Distance Matrices")
         write_distance_matrix_csv(PHONEME_DICT, PHONEME_DISTANCE_DICT, PHONEME_AUDIO_DISTANCE_DICT, WORDS_BY_LETTER)
     elif choice == "Generate Letter Pair Averages":
-        write_distance_averages_csv()
+        write_letter_pair_averages_csv()
+        log_console_header("Letter Pair Averages CSV Generated")
+        print("Letter pair averages have been written to 'CSV Files/letter_pair_averages.csv'.")
+    elif choice == "Generate Letter Averages":
+        write_letter_averages_csv()
+        log_console_header("Letter Averages CSV Generated")
+        print("Letter averages have been written to 'CSV Files/letter_averages.csv'.")
     elif choice == "Find Best Randomized Trial":
         log_console_header("Finding Best Phonetic Alphabet via Randomized Trial")
         best_scores = find_best_set_randomized(PHONEME_DICT, PHONEME_DISTANCE_DICT, PHONEME_AUDIO_DISTANCE_DICT, WORDS_BY_LETTER, TRIALS)
@@ -1031,6 +1173,18 @@ def main():
         logging.info("--------------------------------")
         for word in NATO:
             logging.info("%-8s  ->  %s", word.capitalize(), ' '.join(PHONEME_DICT[word][0]))
+    elif choice == "Visualize Word Graph with iGraph":
+        log_console_header("Visualizing Word Graph with iGraph")
+        visualize_word_graph_igraph(
+            WORDS_BY_LETTER,
+            PHONEME_DICT,
+            PHONEME_DISTANCE_DICT,
+            PHONEME_AUDIO_DISTANCE_DICT,
+            max_per_letter=50,
+            MIN_SCORE=800.0,  # Minimum score to consider an edge
+            use_csv=False,  # Set to True if you want to read from CSV files
+            read_distance_matrix_func=read_distance_matrix  # Only needed if use_csv is True
+        )
     else:
         print("Exiting Program.")
 
