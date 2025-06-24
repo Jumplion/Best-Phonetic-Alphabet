@@ -195,3 +195,9 @@ cython_debug/
 .cursorindexingignore
 *.png
 *.html
+*.json
+*.gexf
+Word Voicings/
+
+# Whitelist the user_settings.json
+!user_settings.json

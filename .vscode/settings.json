@@ -10,6 +10,7 @@
         "figsize",
         "fillvalue",
         "fontsize",
+        "Gephi",
         "hoverinfo",
         "hovermode",
         "igraph",
@@ -21,6 +22,7 @@
         "lemmatizer",
         "Lemmatizing",
         "levelname",
+        "levs",
         "linestyle",
         "maxdist",
         "ncols",
@@ -48,5 +50,6 @@
         "ylabel",
         "ylim",
         "zeroline"
-    ]
+    ],
+    "python.REPL.enableREPLSmartSend": false
 }
