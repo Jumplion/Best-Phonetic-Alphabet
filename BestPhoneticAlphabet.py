@@ -1,291 +1,862 @@
-import nltk
-import editdistance
-import random
 import os
 import csv
 import math
+import random
 import logging
 import itertools
+import string
+import time
+import igraph as ig
+import matplotlib, matplotlib.pyplot as plt
+from collections import defaultdict
+import concurrent.futures
+
 import numpy as np
+from tqdm import tqdm
+
+import nltk
+from nltk.corpus import cmudict, wordnet
+from nltk.stem import WordNetLemmatizer
+
+import editdistance
+
+import plotly.graph_objects as go
 import networkx as nx
-import matplotlib.pyplot as plt
-from collections import Counter, defaultdict
-from itertools import combinations
 
 # 🔧 CONFIGURATION
-FILTER_WORDS = False           # Set to 'True' to filter out words with fewer than MIN_PHONEME_LENGTH phonemes
-MAX_WORDS_PER_LETTER = 1000000   # Max candidate words per starting letter
-TRIALS = 10000                 # Number of random trials
-MIN_PHONEME_LENGTH = 1        # Minimum number of phonemes required per word
-VALIDATE = True              # Set to 'True' to run validation checks on the CMU dictionary
-USE_FEATURE_BASED_DISTANCE = False  # Set to 'True' to use feature-based distance instead of Levenshtein
+logging.basicConfig(
+    level=logging.INFO,  # Change to DEBUG for more detail, WARNING for less
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[
+        logging.StreamHandler(),  # Console output
+        # Uncomment below to also log to a file:
+        # logging.FileHandler("phonetic_alphabet.log")
+    ]
+)
 
-PENALIZE_LENGTH_VARIANCE = True
-LENGTH_VARIANCE_WEIGHT = 10  # Adjust this weight to control penalty severity
+# -----------------------------
+# Phoneme and Word Length Options
+# -----------------------------
+MIN_PHONEME_LENGTH = 2      # Minimum number of phonemes required per word
+MAX_PHONEME_LENGTH = 10     # Maximum number of phonemes allowed per word
+MIN_WORD_LENGTH = 3         # Minimum number of letters required per word
+MAX_WORD_LENGTH = 10        # Maximum number of letters allowed per word
+MIN_SYLLABLES = 2           # Minimum number of syllables allowed per word
+MAX_SYLLABLES = 3           # Maximum number of syllables allowed per word
+
+# -----------------------------
+# Randomization Options
+# -----------------------------
+TRIALS = 10000                  # Number of random trials
+PENALIZE_LENGTH_VARIANCE = True # Set to 'True' to penalize length variance
+LENGTH_VARIANCE_WEIGHT = 10     # Adjust this weight to control penalty severity
+
+# Prefixes that should not be at the start of words
+# These prefixes are often silent or not pronounced, so we filter them out
+PREFIX_FILTERS = [
+    "eu",
+    "gn",
+    "kn",
+    "mn",
+    "ph",
+    "pn",
+    "ps",
+    "sh",
+    "th",
+    "wr"
+]
+
+# Prefix filters for phonemes
+# Certain phonemes should not be at the start of words in certain letter groups
+# For example, "E" words shouldn't start with "y" like "eunuch" or "euphoria"
+BANNED_PHONEME_PREFIXES = {
+    "a" : [],
+    "b" : [],
+    "c" : ["S"],
+    "d" : [],
+    "e" : ["ER", "Y"],
+    "f" : [],
+    "g" : [],
+    "h" : [],
+    "i" : [],
+    "j" : [],
+    "k" : [],
+    "l" : [],
+    "m" : [],
+    "n" : [],
+    "o" : [],
+    "p" : ["F"],
+    "q" : [],
+    "r" : [],
+    "s" : ["SH"],
+    "t" : ["TH", "DH"],
+    "u" : [],
+    "v" : [],    
+    "w" : ["R"],
+    "x" : [],
+    "y" : [],
+    "z" : []
+}
+
+# Words that we don't want in our alphabets
+# These are words that are either offensive, inappropriate, or just don't fit the criteria
+# Some other reasons for blacklisting words:
+# - Not caught by the filters
+# - Strange pronunciations that don't fit the phonetic alphabet
+# - Words that are too similar to other words in the alphabet
+# - Slurs and racial remarks are a no-go, we diverse and tolerant in this sum-bitch
+WORD_BLACKLIST = [
+    "xhosa", 
+    "xian", 
+    "xinjiang", 
+    "xenophobia", 
+    "xenophobic", 
+    "xenophon", 
+    "iwo", 
+    "pedophile", 
+    "rapist",
+]
+
+WORD_WHITELIST = [
+]
 
 # Phoneme Coordinates
 PHONEME_COORDINATES = {
     
     # VOWELS    
-    # Vowel |  Backness (Front 0 / Central 1 / Back 2)     Height (Low [Open] 0 / Mid 1 / High [Close] 2)      Roundness (Rounded 0 / Unrounded 1)
-    "AA":  (0,  2,   0, 0),     # ɑ
-    "AE":  (0,  0,   0, 0),     # æ
-    "AH":  (0,  1,   1, 0),     # ʌ or ə
-    "AO":  (0,  2,   1, 1),     # ɔ
-    "AW":  (0,  1.5, 1, 1),     # aʊ
-    "AX":  (0,  1,   1, 0),     # ə (unstressed)
-    "AY":  (0,  1,   1, 0),     # aɪ
-    "EY":  (0,  0,   1.3, 0),   # e
-    "EH":  (0,  0,   1, 0),     # ɛ
-    "ER":  (0,  1,   1, 0),     # ɚ
-    "IY":  (0,  0,   2, 0),     # i
-    "IH":  (0,  0,   1.7, 0),   # ɪ
-    "OW":  (0,  2,   1.3, 1),   # o
-    "OY":  (0,  1,   1, 0.5),   # ɔɪ
-    "UW":  (0,  2,   2, 1),     # u
-    "UH":  (0,  2,   1.7, 1),   # ʊ
+    # Vowel |  Backness (Front 0 / Central 0.5 / Back 1)     Height (Low [Open] 0 / Mid 0.5 / High [Close] 1)      Roundness (Rounded 0 / Unrounded 1)
+    "AA":  (0,  1,      0,       0),    # ɑ             father
+    "AE":  (0,  0,      0,       0),    # æ             cat
+    "AH":  (0,  0.5,    0.5,     0),    # ʌ or ə        cut
+    "AO":  (0,  1,      0.5,     1),    # ɔ`            caught
+    "AW":  (0,  0.75,   0.5,     1),    # aʊ            cow
+    "AX":  (0,  0.5,    0.5,     0),    # ə (unstressed)
+    "AY":  (0,  0.5,    0.5,     0),    # aɪ            my
+    "EY":  (0,  0,      0.65,    0),    # e             they
+    "EH":  (0,  0,      0.5,     0),    # ɛ             bed
+    "ER":  (0,  0.5,    0.5,     0),    # ɚ or ɝ        her
+    "IY":  (0,  0,      1,       0),    # i             see
+    "IH":  (0,  0,      0.85,    0),    # ɪ             sit
+    "OW":  (0,  1,      0.65,    1),    # o             go
+    "OY":  (0,  0.5,    0.5,     0.5),  # ɔɪ        
+    "UW":  (0,  1,      1,       1),    # u             too
+    "UH":  (0,  1,      0.85,    1),    # ʊ             put
     
-    
-    # CONSONANTS    
-    # 
-    # 
+    # CONSONANTS
     # Consonant | Place of Articulation | Manner of Articulation | Voiced/Unvoiced
-    # 0 = Bilabial, 1 = Labiodental, 2 = Dental, 3 = Alveolar, 4 = Velar, 5 = Glottal
-    # 0 = Stop, 0.5 = Affricate, 1 = Fricative, 2 = Nasal, 3 = Lateral Liquid, 3.5 = Rhotic Liquid, 4 = Glide
+    # 0 = Bilabial, 0.2 = Labiodental, 0.4 = Dental, 0.6 = Alveolar, 0.8 = Velar, 1 = Glottal
+    # 0 = Stop, 0.125 = Affricate, 0.25 = Fricative, 0.5 = Nasal, 0.75 = Lateral Liquid, 0.875 = Rhotic Liquid, 1 = Glide
     # 0 = Voiceless, 1 = Voiced
     
     # Stops
-    "P":  (1, 0, 0, 0),  # voiceless bilabial stop
-    "B":  (1, 0, 0, 1),  # voiced bilabial stop
-    "T":  (1, 2, 0, 0),  # voiceless alveolar stop
-    "D":  (1, 2, 0, 1),  # voiced alveolar stop
-    "K":  (1, 4, 0, 0),  # voiceless velar stop
-    "G":  (1, 4, 0, 1),  # voiced velar stop
-
+    "P":  (1, 0,    0,      0),  # voiceless bilabial stop              pat
+    "B":  (1, 0,    0,      1),  # voiced bilabial stop                 bat
+    "D":  (1, 0.4,  0,      1),  # voiced alveolar stop                 dog
+    "T":  (1, 0.4,  0,      0),  # voiceless alveolar stop              top
+    "K":  (1, 0.8,  0,      0),  # voiceless velar stop                 cat
+    "G":  (1, 0.8,  0,      1),  # voiced velar stop                    go
+    
     # Affricates
-    "CH": (1, 3, 0.5, 0),  # voiceless postalveolar affricate
-    "JH": (1, 3, 0.5, 1),  # voiced postalveolar affricate
+    "CH": (1, 0.6,  0.125,  0),  # voiceless postalveolar affricate     chip
+    "JH": (1, 0.6,  0.125,  1),  # voiced postalveolar affricate        judge
 
     # Fricatives
-    "F":  (1, 1, 1, 0),  # voiceless labiodental fricative
-    "V":  (1, 1, 1, 1),  # voiced labiodental fricative
-    "TH": (1, 2, 1, 0),  # voiceless dental fricative
-    "DH": (1, 2, 1, 1),  # voiced dental fricative
-    "S":  (1, 2, 1, 0),  # voiceless alveolar fricative
-    "Z":  (1, 2, 1, 1),  # voiced alveolar fricative
-    "SH": (1, 3, 1, 0),  # voiceless postalveolar fricative
-    "ZH": (1, 3, 1, 1),  # voiced postalveolar fricative
-    "HH": (1, 5, 1, 0),  # voiceless glottal fricative
+    "F":  (1, 0.2,  0.25,   0),  # voiceless labiodental fricative      fish
+    "V":  (1, 0.2,  0.25,   1),  # voiced labiodental fricative         van
+    "TH": (1, 0.4,  0.25,   0),  # voiceless dental fricative           thin
+    "DH": (1, 0.4,  0.25,   1),  # voiced dental fricative              then
+    "S":  (1, 0.4,  0.25,   0),  # voiceless alveolar fricative         see
+    "Z":  (1, 0.4,  0.25,   1),  # voiced alveolar fricative            zoo
+    "SH": (1, 0.6,  0.25,   0),  # voiceless postalveolar fricative     she
+    "ZH": (1, 0.6,  0.25,   1),  # voiced postalveolar fricative        measure
+    "HH": (1, 1,    0.25,   0),  # voiceless glottal fricative          he
 
     # Nasals
-    "M":  (1, 0, 2, 1),  # bilabial nasal
-    "N":  (1, 2, 2, 1),  # alveolar nasal
-    "NG": (1, 4, 2, 1),  # velar nasal
+    "M":  (1, 0,    0.5,    1),  # bilabial nasal                       me
+    "N":  (1, 0.4,  0.5,    1),  # alveolar nasal                       no
+    "NG": (1, 0.8,  0.5,    1),  # velar nasal                          sing
 
     # Liquids
-    "L":  (1, 2, 3, 1),  # alveolar lateral liquid
-    "R":  (1, 2, 3.5, 1),# alveolar rhotic liquid
+    "L":  (1, 0.4,  0.75,   1),  # alveolar lateral liquid              leaf    
+    "R":  (1, 0.4,  0.875,  1),  # alveolar rhotic liquid               red
 
     # Glides (approximants)
-    "Y":  (1, 3, 4, 1),  # palatal glide (IPA: /j/)
-    "W":  (1, 0, 4, 1)   # bilabial glide
+    "Y":  (1, 0.6,  1,      1),  # palatal glide    (IPA: /j/)          yes
+    "W":  (1, 0,    1,      1)   # bilabial glide   (IPA: /w/)          we
 }   
-
-
+PHONEME_DICT = defaultdict(list)
+PHONEME_DISTANCE_DICT = {}
+WORDS_BY_LETTER = defaultdict(list)
+SHOW_DICTIONARY_STATS = False       # Set to 'True' to show stats about the dictionary after cleanup
 # -----------------------------
 # 📦 FUNCTION DEFINITIONS
 # -----------------------------
 
-# This is the naive attempt to calculate the phoneme distance between two words
-def phoneme_distance_levenshtein(w1, w2):
-    """Calculate Levenshtein distance between two words' primary phoneme lists."""
-    p1 = pron_dict[w1][0]
-    p2 = pron_dict[w2][0]
-    return editdistance.eval(p1, p2)
+# --------------------------------
+# Calculation Functions
+# --------------------------------
 
-def compute_phoneme_distance(p1, p2):
-    distance_func = phoneme_distance_levenshtein
-    return sum(distance_func(a, b) for a, b in itertools.zip_longest(p1, p2, fillvalue=""))
+# Calculate Levenshtein distance between two words.
+def levenshtein_distance(w1, w2):
+    return editdistance.eval(w1, w2)
 
-def compute_total_distance(word_set):
-    distances = [
-        compute_phoneme_distance(w1[0], w2[0])
-        for w1, w2 in itertools.combinations(word_set, 2)
-    ]
+# Calculate the phoneme distance between two phoneme sequences.
+def phoneme_distance(p1_list, p2_list, p_distance_dict=PHONEME_DISTANCE_DICT):
+    distance = 0
+    for i in range(min(len(p1_list), len(p2_list))):
+        distance += p_distance_dict.get((p1_list[i], p2_list[i]), 0)
+
+    # Handle the case where one list is longer than the other
+    remaining_phonemes = p1_list[len(p2_list):] if len(p1_list) > len(p2_list) else p2_list[len(p1_list):]
+    # If the remaining phonemes are empty, return the distance
+    if not remaining_phonemes:
+        return distance
+    # If the remaining phonemes are not empty, add the distance of the remaining phonemes
+    # Adding the distance/magnitude of remaining phonemes are a flawed system, need to figure out a better way to handle this   
+    distance += sum(p_distance_dict.get((remaining_phonemes[i], ""), 0) for i in range(len(remaining_phonemes)))   
+    return distance
+
+# Calculate the number of shared phoneme sequences between two phoneme sequences.
+# Takes p_distance_dict purely for compatibility, but does not use it in this function.
+def shared_phoneme_sequences(p1, p2, p_distance_dict=PHONEME_DISTANCE_DICT):
+    # Measure the time it takes to complete the function   
+    set1, set2 = set(), set()
+    n1, n2 = len(p1), len(p2)
+    N = min(n1, n2) + 1
+
+    for i in range(n1):
+        for j in range(i + 1, min(n1, i + N)):
+            set1.add(tuple(p1[i:j]))
+
+    for i in range(n2):
+        for j in range(i + 1, min(n2, i + N)):
+            set2.add(tuple(p2[i:j]))
+
+    # Count the intersection
+    return len(set1 & set2)
+
+# Calculate the total Levenshtein distance for a set of words (no parallel processing).
+def total_levenshtein_distance(word_set):
+    pairs = list(itertools.combinations(word_set, 2))
+    distances = [levenshtein_distance(w1, w2) for w1, w2 in pairs]
     base_score = sum(distances)
 
+    penalty = 0
     if PENALIZE_LENGTH_VARIANCE:
-        lengths = [len(pron_dict[w][0]) for w in word_set]
+        lengths = [len(w) for w in word_set]
         std_dev = np.std(lengths)
         penalty = std_dev * LENGTH_VARIANCE_WEIGHT
-        return base_score - penalty  # subtracting penalty lowers the score
-    else:
-        return base_score
 
-def find_best_set_randomized(words_by_letter, trials=1000): 
-    headers = ["score", "algorithm"] + list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
-    write_header = not os.path.exists("random_search_log.csv")
-    
-    """Find a diverse set via random sampling."""
-    best_score = -1
-    best_set = []
+    return base_score - penalty
+
+# Calculate the total phoneme distance for a set of words.
+# This function can calculate both basic phoneme distance and shared phoneme sequences.
+def total_phoneme_distance(word_set, sequence=False, p_dict=PHONEME_DICT, p_distance_dict=PHONEME_DISTANCE_DICT):
+    pairs = list(itertools.combinations(word_set, 2))
+    func = phoneme_distance if not sequence else shared_phoneme_sequences
+    distances = [func(p_dict[w1][0], p_dict[w2][0], p_distance_dict) for w1, w2 in pairs]
+    return sum(distances)
+
+# Helper function for scoring a candidate (no parallel processing).
+def _score_candidate(candidate, p_dict=PHONEME_DICT, p_distance_dict=PHONEME_DISTANCE_DICT):
+    l = len(candidate)
+    avg_levenshtein = total_levenshtein_distance(candidate) / l
+    avg_phoneme = total_phoneme_distance(candidate, False, p_dict, p_distance_dict) / l
+    avg_shared = total_phoneme_distance(candidate, True, p_dict, p_distance_dict) / l
+    score = avg_levenshtein + avg_phoneme - avg_shared
+    return (score, avg_levenshtein, avg_phoneme, avg_shared)
+
+# Find the best set of words via random sampling (no parallel processing).
+def find_best_set_randomized(p_dict, p_distance_dict, words_by_letter, trials=1000): 
+    log_console_header("Starting Randomized Search for Best Set of Words", trials)
+    best_score = best_score_levenshtein = best_score_phoneme = -1
+    best_score_shared = 99999999999
+
+    best_set = best_levenshtein = best_phoneme = best_shared = []
+
     letters = sorted(words_by_letter.keys())
 
+    # Delete the file if it exists
+    if os.path.exists("random_search_log.csv"):
+        os.remove("random_search_log.csv")
+
+    candidates = []
+    for _ in range(trials):
+        c = [random.choice(words_by_letter[l]) for l in letters if words_by_letter[l]]
+        if len(c) == len(letters):  # Ensure we have one word per letter
+            candidates.append(c)
+
+    results = {}
+    # parallel processing of candidates
+    log_console_header("Scoring Candidates in Parallel")
+    with concurrent.futures.ProcessPoolExecutor() as executor:
+        futures = {executor.submit(_score_candidate, c, p_dict, p_distance_dict): c for c in candidates}
+        for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="Scoring Candidates", unit="candidate"):
+            score, avg_levenshtein, avg_phoneme, avg_shared = future.result()
+            c = futures[future]
+            results[tuple(c)] = (score, avg_levenshtein, avg_phoneme, avg_shared)
+
     with open("random_search_log.csv", "a", newline="") as f:
-        writer = csv.writer(f)  
-        # Write header if file is new
-        if write_header:
-            writer.writerow(headers)
+        writer = csv.writer(f)
+        writer.writerow(["Score", "Avg Levenshtein Distance", "Avg Phoneme Distance (Basic)", "Avg Shared Phoneme Sequence Count"] + list("ABCDEFGHIJKLMNOPQRSTUVWXYZ"))
 
-        for i in range(trials):
-            candidate = [random.choice(words_by_letter[letter]) for letter in letters if words_by_letter[letter]]
-            
-            # Wait until we have a a full set of 26 letters
-            if len(candidate) < 26:
-                continue
-            score = compute_total_distance(candidate)
+        # Sequential scoring of candidates
+        for c in tqdm(candidates, total=len(candidates), desc="Writing Results to CSV", unit=" candidate"):
+            score, avg_levenshtein, avg_phoneme, avg_shared = _score_candidate(c, p_dict, p_distance_dict)
+            writer.writerow([score, avg_levenshtein, avg_phoneme, avg_shared] + c)
 
-            # Log this candidate and its score to the file
-            # Sort the trial data
-            candidate = sorted(candidate)
-            # Write the trial data
-            writer.writerow([score, "Random Search"] + candidate)
-            
-            # Check if this candidate is better than the best found so far
             if score > best_score:
                 best_score = score
-                best_set = candidate
+                best_set = c
+            if avg_levenshtein > best_score_levenshtein:
+                best_score_levenshtein = avg_levenshtein
+                best_levenshtein = c
+            if avg_phoneme > best_score_phoneme:
+                best_score_phoneme = avg_phoneme
+                best_phoneme = c
+            if avg_shared < best_score_shared:
+                best_score_shared = avg_shared
+                best_shared = c
 
-            if (i + 1) % (trials // 10) == 0 or (i + 1) == trials:
-                print(f"Progress: {((i + 1) / trials) * 100:.0f}%")
+    best_scores = {
+        "score": best_score,
+        "best levenshtein": best_score_levenshtein,
+        "best phoneme": best_score_phoneme,
+        "best shared": best_score_shared
+    }
 
-    return best_set, best_score
+    return best_scores, best_set, best_levenshtein, best_phoneme, best_shared
 
+# Helper function for parallel processing of word distances.
+def _word1_distances(args):
+    word1, word1_pron, filtered_words, pron_dict, phoneme_distances = args
+    total_dist_levenshtein = total_dist_phoneme = total_shared = count = 0.0
+    
+    for word2 in filtered_words:
+        word2_pron = pron_dict[word2][0]
+        total_dist_levenshtein += levenshtein_distance(word1, word2)
+        total_dist_phoneme += phoneme_distance(word1_pron, word2_pron, phoneme_distances)
+        total_shared += shared_phoneme_sequences(word1_pron, word2_pron, phoneme_distances)
+        count += 1
+    
+    # Calculate the magnitude of the phoneme sequence
+    magnitude = math.sqrt(sum(phoneme_distances.get((p, ""), 0) ** 2 for p in word1_pron))
+    return magnitude, total_dist_levenshtein, total_dist_phoneme, total_shared, count
 
+# ---------------------------------
+# Calculate and write word averages to a CSV file.
+# This function calculates the average Levenshtein distance, phoneme distance,
+# and shared phoneme sequence count for each word, and writes the results to a CSV file.
+# ---------------------------------
+def write_word_averages(p_dict, p_distance_dict):
 
-def write_phoneme_distance_matrix(filename="phoneme_distances.csv"):
-    """Compare every phoneme coordinate with every other and write distances to a CSV."""
+    if not check_file_overwrite("word_score_averages.csv"):
+        return
+    
+    # Filter Word lists excluding words starting with each letter
+    word_list = list(p_dict.keys())
+    filter_word_list = {
+        "A": [w for w in word_list if w[0].upper() != "A"],
+        "B": [w for w in word_list if w[0].upper() != "B"],
+        "C": [w for w in word_list if w[0].upper() != "C"],
+        "D": [w for w in word_list if w[0].upper() != "D"],
+        "E": [w for w in word_list if w[0].upper() != "E"],
+        "F": [w for w in word_list if w[0].upper() != "F"],
+        "G": [w for w in word_list if w[0].upper() != "G"],
+        "H": [w for w in word_list if w[0].upper() != "H"],
+        "I": [w for w in word_list if w[0].upper() != "I"],
+        "J": [w for w in word_list if w[0].upper() != "J"],
+        "K": [w for w in word_list if w[0].upper() != "K"],
+        "L": [w for w in word_list if w[0].upper() != "L"],
+        "M": [w for w in word_list if w[0].upper() != "M"],
+        "N": [w for w in word_list if w[0].upper() != "N"],
+        "O": [w for w in word_list if w[0].upper() != "O"],
+        "P": [w for w in word_list if w[0].upper() != "P"],
+        "Q": [w for w in word_list if w[0].upper() != "Q"],
+        "R": [w for w in word_list if w[0].upper() != "R"],
+        "S": [w for w in word_list if w[0].upper() != "S"],
+        "T": [w for w in word_list if w[0].upper() != "T"],
+        "U": [w for w in word_list if w[0].upper() != "U"],
+        "V": [w for w in word_list if w[0].upper() != "V"],
+        "W": [w for w in word_list if w[0].upper() != "W"],
+        "X": [w for w in word_list if w[0].upper() != "X"],
+        "Y": [w for w in word_list if w[0].upper() != "Y"],
+        "Z": [w for w in word_list if w[0].upper() != "Z"]
+    }
+    log_console_header("Total Words to Process", len(word_list))
+    
+    args_list = []
+    for word1 in word_list:
+        filtered_words = filter_word_list.get(word1[0].upper(), [])
+        word1_pron = p_dict[word1][0]
+        args_list.append((word1, word1_pron, filtered_words, p_dict, p_distance_dict))
+
+    log_console_header("Starting Parallel Processing of Word Distances (this might take a minute)...")
+    results = []
+    with concurrent.futures.ProcessPoolExecutor() as executor:
+        results = list(tqdm(executor.map(_word1_distances, args_list), total=len(args_list), desc="Calculating Word Averages", unit=" word"))
+
+    log_console_header("Writing Word Averages to 'word_score_averages.csv'")
+    with open("word_score_averages.csv", "w", newline="") as avg_csvfile:
+        avg_writer = csv.writer(avg_csvfile)
+        avg_writer.writerow(["Word", "Phonemes", "Magnitude", "Average Levenshtein Distance", "Average Phoneme Distance (Basic)", "Average Shared Phoneme Sequence Count"])
+        
+        for ind, args in tqdm(enumerate(args_list), desc="Processing Results", total=len(args_list), unit="word"):
+            word1, word1_pron = args[:2]
+            magnitude, total_dist_levenshtein, total_dist_phoneme, total_shared, count = results[ind]
+            avg_levenshtein = total_dist_levenshtein / count
+            avg_phoneme = total_dist_phoneme / count
+            avg_shared = total_shared / count
+            avg_writer.writerow([word1, " ".join(word1_pron), magnitude, avg_levenshtein, avg_phoneme, avg_shared])
+            logging.debug(
+                "Word: %-12s | Phonemes: %-20s | Magnitude: %.6f | Avg Levenshtein: %.6f | Avg Phoneme Dist: %.6f | Avg Shared Seq Count: %.6f",
+                word1, " ".join(word1_pron), magnitude, avg_levenshtein, avg_phoneme, avg_shared
+            )
+
+    log_console_header("Word Averages Written to 'word_score_averages.csv'")
+
+# --------------------------------
+# Write the distance matrix for a given type (levenshtein, phoneme, shared).
+# Creates a CSV file for each letter pair (e.g., A-B, A-C, etc.)
+# NOTE: This function does not create redundant letter pairs
+# - E.G., A-B and B-A are not created separately since they would be identical (just reversed).
+# Creates a directory structure "CSV Files/[matrix_type] Distance Matrices/" to store the csv files.
+# The average distances for each letter pair are also written to a separate file.
+# - E.G., "CSV Files/Levenshtein Distance Matrices/levenshtein_averages.csv"
+# @param p_dict: The phonetic dictionary mapping words to their phoneme sequences.
+# @param p_distance_dict: The phoneme distance dictionary mapping phoneme pairs to their distances.
+def write_distance_matrix(p_dict, p_distance_dict, words_by_letters, matrix_type):
+    base_dir = os.path.join("CSV Files", matrix_type.capitalize() + " Distance Matrices")
+    os.makedirs(base_dir, exist_ok=True)
+    
+    filename_template = {
+        "levenshtein": "levenshtein_matrix_{0}_{1}.csv",
+        "phoneme": "phoneme_distance_matrix_{0}_{1}.csv",
+        "shared": "shared_phoneme_matrix_{0}_{1}.csv"
+    }[matrix_type]
+
+    header = {
+        "levenshtein": ["Word 1", "Word 2", "Levenshtein Distance"],
+        "phoneme": ["Word 1", "Word 2", "Phoneme Distance"],
+        "shared": ["Word 1", "Word 2", "Shared Phoneme Sequence Count"]
+    }[matrix_type]
+    
+    def distance_func(w1, w2):
+        if matrix_type == "levenshtein":
+            distance = levenshtein_distance(w1, w2)
+        elif matrix_type == "phoneme":
+            distance = phoneme_distance(p_dict[w1][0], p_dict[w2][0], p_distance_dict)
+        elif matrix_type == "shared":
+            distance = shared_phoneme_sequences( p_dict[w1][0], p_dict[w2][0], p_distance_dict)
+        else:
+            raise ValueError("Unknown matrix_type: " + matrix_type)
+        return distance
+    
+    # Create the "Average" File to store the average distances for each letter pair
+    avg_filename = f"{base_dir}/{matrix_type}_averages.csv"              # Write the average to a file
+    with open(avg_filename, "w", newline="") as avg_file:
+        avg_writer = csv.writer(avg_file)
+        avg_writer.writerow(["Letter 1", "Letter 2", "Average Distance"])  # Write header for averages file
+
+    letters = list(string.ascii_uppercase)
+    for l1 in tqdm(letters, total = len(letters), desc=f"{matrix_type}: Calculating {matrix_type} Distances", unit=" letter pairs", leave=False):
+        l1_index = letters.index(l1)
+        for l2 in tqdm(letters[l1_index:], total = len(letters[l1_index:]), desc=f"Currently On: {l1}-Word {matrix_type} Distances", unit=" letter", leave=False):
+
+            filename = os.path.join(base_dir, filename_template.format(l1, l2))
+            
+            # Skip if the file already exists (We already calculated this distance matrix)
+            if(os.path.exists(filename)):
+                continue
+            
+            word_list1 = words_by_letters[l1]
+            word_list2 = words_by_letters[l2]
+
+            letter_pair_results = []    # Keep results inside for loop so it doesn't accumulate across letter pairs
+            for w1 in tqdm(word_list1, total=len(word_list1), desc=f"Calculating: {l1}_{l2} {matrix_type} Distances", unit=" word", leave=False):
+                for w2 in word_list2:
+                    distance = distance_func(w1, w2)
+                    letter_pair_results.append((w1, w2, distance))
+
+            distances = []  # Store distances for this letter pair
+            with open(filename, "w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(header)
+                for w1, w2, distance in tqdm(letter_pair_results, desc=f"Writing {l1}-{l2} {matrix_type} Distances to {filename_template.format(l1, l2)}", unit=" distance", leave=False):
+                    distances.append(distance)  # Collect distances for averaging
+                    writer.writerow([w1, w2, distance])
+
+            # Append the average to the file
+            with open(avg_filename, "a", newline="") as avg_file:
+                avg_writer = csv.writer(avg_file)
+                avg_writer.writerow([l1, l2, np.mean(distances) if distances else 0.0])
+
+# -------------------------------
+# Dictionary Functions
+# -------------------------------
+
+# Compare every phoneme coordinate with every other, as well as itself and an empty string
+def get_phoneme_distance_dict():
     phonemes = list(PHONEME_COORDINATES.keys())
-    with open(filename, "w", newline="") as csvfile:
-        writer = csv.writer(csvfile)
-        # Write header
-        writer.writerow(["Phoneme1", "Phoneme2", "EuclideanDistance"])
-        for i, p1 in enumerate(phonemes):
-            coord1 = PHONEME_COORDINATES[p1]
-            for j, p2 in enumerate(phonemes):
-                if i < j:  # Avoid duplicate pairs and self-comparison
-                    coord2 = PHONEME_COORDINATES[p2]
-                    # Compute Euclidean distance
-                    dist = math.sqrt(sum((a - b) ** 2 for a, b in zip(coord1, coord2)))
-                    writer.writerow([p1, p2, dist])
-
-
-# -----------------------------
-# 📥 DATA LOADING & PREP
-# -----------------------------
-
-nltk.download('cmudict')
-from nltk.corpus import cmudict
-pron_dict = cmudict.dict()
-
-# Group words by first letter
-words_by_letter = defaultdict(list)
-for word in pron_dict:
-    if word[0].isalpha() and word.isalpha():
-        first_letter = word[0].upper()
-        words_by_letter[first_letter].append(word)
-
-# Filter and trim word lists by minimum phoneme length (if desired)
-if FILTER_WORDS:
-    for letter in words_by_letter:
-        filtered = [w for w in words_by_letter[letter] if len(pron_dict[w][0]) >= MIN_PHONEME_LENGTH]
-        words_by_letter[letter] = filtered[:MAX_WORDS_PER_LETTER]
-
-
-# Validate the CMU dictionary (if desired)
-# Validate CMU dictionary
-# Goes through the CMU dictionary and checks for:
-# 1. Word counts by starting letter
-# 2. Phoneme length distribution
-# 3. Check if any letters are missing or underpopulated
-# 4. Example problematic or variant words
-# 5. Total word count
-if VALIDATE:
-    print("\n🔍 CMU Dictionary Validation Report\n")
+    distance = defaultdict(float)
+    for i, p1 in enumerate(phonemes):
+        coord1 = PHONEME_COORDINATES[p1]
+        distance[(p1, "")] = math.sqrt(sum(a ** 2 for a in coord1))
+        distance[("", p1)] = math.sqrt(sum(a ** 2 for a in coord1))
+        distance[(p1, p1)] = 0.0
+        
+        for j, p2 in enumerate(phonemes):
+            if i < j:  # Avoid duplicate pairs
+                coord2 = PHONEME_COORDINATES[p2]
+                distance[(p1, p2)] = math.sqrt(sum((a - b) ** 2 for a, b in zip(coord1, coord2)))
+                distance[(p2, p1)] = math.sqrt(sum((a - b) ** 2 for a, b in zip(coord1, coord2)))
+                
+    log_console_header("Phoneme Distance Dictionary Created | Total Phonemes", len(PHONEME_COORDINATES))
     
-    # 0. Total word count
-    print(f"\n📦 Total Words in CMU Dictionary: {len(pron_dict)}")
+    # Print out the phoneme distance dictionary
+    #logging.debug("Phoneme Distance Dictionary: %s", distance)
     
-    # 1. Word counts by starting letter
-    print("📊 Word Count by First Letter (filtered):")
-    for letter in sorted(words_by_letter.keys()):
-        count = len(words_by_letter[letter])
-        print(f"  {letter}: {count} words")
-
-    # 2. Get the total number of each phoneme
-    phoneme_counter = Counter()
-
-    for word, pronunciations in pron_dict.items():
-        for phoneme_list in pronunciations:
-            phoneme_counter.update(phoneme_list)
-
-    # Sort phoneme counts
-    phoneme_counter = dict(sorted(phoneme_counter.items(), key=lambda item: item[1], reverse=True))
+    if os.path.exists("phoneme_distance_dict.csv"):
+        os.remove("phoneme_distance_dict.csv")
+        
+    log_console_header("Saving Phoneme Distance Dictionary to 'phoneme_distance_dict.csv'")
+    # Save the phoneme distance dictionary to a file
+    with open("phoneme_distance_dict.csv", "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["Phoneme 1", "Phoneme 2", "Distance"])
+        for (p1, p2), dist in distance.items():
+            writer.writerow([p1, p2, dist])
+            
+    logging.info("Phoneme Distance Dictionary Saved to 'phoneme_distance_dict.csv'")
     
-    # Print phoneme counts        
-    print("\n🔢 Phoneme Totals in CMU Dictionary:")
-    for phoneme, count in phoneme_counter.items():
-        print(f"{phoneme:<5} : {count}")
+    # Return the distance dictionary 
+    return distance
 
-    # 3. Phoneme length distribution
-    phoneme_lengths = Counter()
-    for word in pron_dict:
-        try:
-            phoneme_lengths[len(pron_dict[word][0])] += 1
-        except IndexError:
-            continue
+# Clean the CMU Pronouncing Dictionary and apply filters.
+def get_cleaned_cmu_dict():
+    cleaned_dict = cmudict.dict()
+    
+    # Normalize the dictionary
+    cleaned_dict = {
+        word: prons for word, prons in tqdm(cleaned_dict.items(), desc="Cleaning CMU Dictionary", unit="word")
+        if (
+            (word in WORD_WHITELIST) or
+            (word.isalpha()) and
+            (word not in WORD_BLACKLIST) and
+            (not any(word.startswith(prefix) for prefix in PREFIX_FILTERS)) and
+            (len(prons[0]) >= MIN_PHONEME_LENGTH) and
+            (len(prons[0]) <= MAX_PHONEME_LENGTH) and
+            (len(word) >= MIN_WORD_LENGTH) and
+            (len(word) <= MAX_WORD_LENGTH) and
+            (len(set(word)) > 1) and
+            (not any(word.startswith(prefix) for prefix in BANNED_PHONEME_PREFIXES.get(word[0].lower(), []))) and
+            (wordnet.synsets(word)) and
+            (MIN_SYLLABLES <= len([p for p in prons[0] if p[-1].isdigit()]) <= MAX_SYLLABLES)
+        )
+    }              
 
-    print("\n📏 Phoneme Length Distribution (first pronunciation only):")
-    for length, count in sorted(phoneme_lengths.items()):
-        print(f"  {length} phonemes: {count} words")
+    lemmatizer = WordNetLemmatizer()
+    lemma_map = defaultdict(list)
+    
+    # Lemmatize the words, group by lemma
+    for word, prons in tqdm(cleaned_dict.items(), desc="Lemmatizing Words", unit="word"):       
+        noun = lemmatizer.lemmatize(word.lower(), pos='n')
+        lemma = lemmatizer.lemmatize(noun, pos='v')
+        lemma_map[lemma].append((word, prons[0]))
+
+    temp_dict = {}
+    # Choose representative word for each lemma (shortest spelling)
+    for lemma, variants in lemma_map.items():
+        representative = min(variants, key=lambda x: len(x[0]))
+        temp_dict[representative[0]] = [representative[1]]  # keep as list for CMU compatibility 
+    
+    cleaned_dict = temp_dict
+
+    # Normalize phoneme representation
+    for word, pronunciations in tqdm(cleaned_dict.items(), desc="Normalizing Phonemes", unit="word"):
+        cleaned_dict[word] = [[p.upper() for p in [p[:-1] if p[-1].isdigit() else p for p in pron]] for pron in pronunciations]
+
+    logging.info("CMU Pronouncing Dictionary Cleaned | Total Words: %d", len(cleaned_dict))
+
+    return cleaned_dict
+
+# -------------------------------
+# UTILITY FUNCTIONS
+# -------------------------------
+
+# Log a header message to the console
+def log_console_header(message, data=None):
+    logging.info("--------------------------------")
+    if data:
+        logging.info("%s: %s", message, data)
+    else:
+        logging.info(message)
+    logging.info("--------------------------------")
+
+# Log the best scores and words in a formatted way
+def log_scores(score, list_name, words, p_dict):
+    logging.info("--------------------------------")
+    logging.info("Best %s Set (%.6f):", list_name, score)
+    logging.info("--------------------------------")
+    for word in words:
+        logging.info("%-12s  ->  %s", word.capitalize(), ' '.join(p_dict[word][0]))
+
+# Check if the file already exists and ask for overwrite permission
+# If the user does not want to overwrite, exit the function
+def check_file_overwrite(filename):
+    if os.path.exists(filename):
+        overwrite = input(f"File '{filename}' already exists. Recalculate and overwrite? (y/n): ").strip().lower()
+        if overwrite != 'y':
+            log_console_header("Exiting without overwriting the file.")
+            return False
+        else:
+            os.remove(filename)
+    return True
+
+# --------------------------------
+# Graphing Functions
+# --------------------------------
+
+def plot_graph(spring_factor = 0.15, iters = 50, max_distance = 1):
+    words = set()
+    edges = defaultdict(list)
+
+    for l1 in tqdm(string.ascii_uppercase, total=26, desc="Reading Word Distances", unit=" letter"):
+        l1_index = string.ascii_uppercase.index(l1)
+        check_list = string.ascii_uppercase[l1_index:]  # Only check letters after the current letter to avoid duplicates
+        for l2 in tqdm(check_list, total=len(check_list), desc=f"- Reading {l1}-Word Distances", unit=" letter", leave=False):
+            filename = f"CSV Files/Levenshtein Distance Matrices/levenshtein_matrix_{l1}_{l2}.csv"
+            with open(filename, newline="") as f:
+                reader = csv.reader(f)
+                next(reader)
+                for w1, w2, dist in tqdm(reader, desc=f"-- Processing {l1}-{l2} Distances", unit=" word pair", leave=False):
+                    if w1 != w2 and int(dist) <= max_distance:
+                        words.add(w1)
+                        words.add(w2)
+                        edges[dist].append((w1, w2))
+                    #if w1 != w2 and int(dist) <= max_distance:
+
+    # Build the graph with networkx for easy Plotly integration
+    G = nx.Graph()
+    G.add_nodes_from(tqdm(words, total=len(words), desc="Adding Nodes", unit="word"))
+    
+    for d in tqdm(edges.keys(), total=len(edges), desc="Processing Edges", unit="distance"):
+        G.add_edges_from(tqdm(edges[d], total=len(edges), desc=f"Adding '{d}' Edges", unit="edge", leave=False))
+
+    # Assign colors by first letter
+    letters = sorted(set(w[0].upper() for w in words))
+    letter_to_color = {l: f"hsl({int(360*i/len(letters))},70%,50%)" for i, l in enumerate(letters)}
+    node_colors = [letter_to_color[w[0].upper()] for w in G.nodes()]
+
+    # Build a list of node positions based on a wor'ds first letter and it's position in the dictionary
+    # This will help in visualizing clusters of words starting with the same letter
+    #node_positions = {}
+    #for i, node in enumerate(tqdm(G.nodes(), total=len(G.nodes()), desc="Assigning Node Positions", unit="node")):
+    #    first_letter = node[0].upper()
+    #    if first_letter not in node_positions:
+    #        node_positions[first_letter] = []
+    #    node_positions[first_letter].append((node, i))
+    #    
+    ## Sort nodes by their position in the dictionary for each letter
+    #for letter, nodes in tqdm(node_positions.items(), total=len(node_positions), desc="Sorting Nodes by Position", unit="letter"):
+    #    nodes.sort(key=lambda x: x[1])
+    #    
+    ## Create a mapping of node to position
+    #pos = {}
+    #for letter, nodes in tqdm(node_positions.items(), total=len(node_positions), desc="Mapping Node Positions", unit="letter"):
+    #    for i, (node, _) in tqdm(enumerate(nodes), total=len(nodes), desc=f"Mapping {letter}-Words", unit="node", leave=False):
+    #        pos[node] = (i * 0.1, ord(letter) - ord('A') * 0.1)
+    
+    log_console_header("Calculating Node Positions for Scatter Plot (This will take a while...)")
+    logging.info("Using spring layout with factor: %.2f and iterations: %d", spring_factor, iters)
+    # Use spring layout for positions
+    pos = nx.spring_layout(G, k=spring_factor, iterations=iters)#, pos=pos)
+
+    # Build edge traces
+    edge_x = edge_y = []
+    for e in tqdm(G.edges(), total=len(G.edges()), desc="Building Edge Traces", unit="edge"):
+        x0, y0 = pos[e[0]]
+        x1, y1 = pos[e[1]]
+        edge_x += [x0, x1, None]
+        edge_y += [y0, y1, None]
+
+    log_console_header("Calculating Edge Traces for Scatter Plot (This will take a minute...)")
+    edge_trace = go.Scatter(
+        x=edge_x, y=edge_y,
+        line=dict(width=1, color="rgb(50, 50, 50)"),
+        hoverinfo='none',
+        mode='lines'
+    )
+
+    # Build node traces
+    node_x = []
+    node_y = []
+    node_text = []
+    for node in tqdm(G.nodes(), total=len(G.nodes()), desc="Building Node Traces", unit="node"):
+        x, y = pos[node]
+        node_x.append(x)
+        node_y.append(y)
+        node_text.append(node)
+
+    node_trace = go.Scatter(
+        x=node_x, y=node_y,
+        mode='markers',
+        hoverinfo='text',
+        text=node_text,
+        marker=dict(
+            showscale=False,
+            color=node_colors,
+            size=8,
+            line_width=2
+        )
+    )
+
+    fig = go.Figure(data=[edge_trace, node_trace],
+                    layout=go.Layout(
+                        title=f'Levenshtein Cluster Graph: Iterations: {iters}, Max Distance: {max_distance}',
+                        showlegend=False,
+                        hovermode='closest',
+                        margin=dict(b=20, l=5, r=5, t=40),
+                        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)
+                    ))
+
+    #fig.write_image(f"levenshtein_cluster_graph_iter{iters}_maxdist{max_distance}.png", width=1200, height=800, scale=3)
+    fig.write_html(f"levenshtein_cluster_graph_iter{iters}_maxdist{max_distance}.html")
+    fig.show()
+
+def plot_a_word_levenshtein_bargraph():
+    
+    letters = sorted(string.ascii_uppercase)
+    averages = {l: [] for l in letters}
+    
+    if os.path.exists("CSV Files/Levenshtein Distance Matrices/levenshtein_averages.csv"):
+        averages = defaultdict(list)
+        with open("CSV Files/Levenshtein Distance Matrices/levenshtein_averages.csv", newline="") as avg_file:
+            avg_reader = csv.reader(avg_file)
+            next(avg_reader)
+            for row in avg_reader:
+                target_letter, _, avg_distance = row
+                averages[target_letter].append(float(avg_distance))
+                    
+    # If the averages file does not exist, calculate the averages
+    else:
+        with open("CSV Files/Levenshtein Distance Matrices/levenshtein_averages.csv", "w", newline="") as avg_file:
+            avg_writer = csv.writer(avg_file)
+            avg_writer.writerow(["Target Letter", "Compared Letter", "Average Levenshtein Distance"])
+
+        for l1 in string.ascii_uppercase:
+            for l2 in tqdm(string.ascii_uppercase, total = 26, desc=f"Calculating {l1}-Word Distances", unit=" letter"):
+                filename = f"CSV Files/Levenshtein Distance Matrices/levenshtein_matrix_{l1}_{l2}.csv"  
+                distances = []
+                with open(filename, newline="") as f:
+                    reader = csv.reader(f)
+                    next(reader)  # skip header
+                    for row in reader:
+                        _, _, dist = row
+                        distances.append(float(dist))
+
+                    if distances:
+                        averages[l1].append(np.mean(distances))
+
+                    # Write the average to a file
+                    with open("CSV Files/Levenshtein Distance Matrices/levenshtein_averages.csv", "a", newline="") as avg_file:
+                        avg_writer = csv.writer(avg_file)
+                        avg_writer.writerow([l1, l2, np.mean(distances) if distances else 0.0])
+
+    x_labels = np.arange(len(letters))
+    width = 1.0/(52.0)
+    multiplier = 0.0
+    
+    fig, ax = plt.subplots(layout = "constrained")
+    
+    for attr, mean in averages.items():
+        offset = width * multiplier
+        rects = ax.bar(x_labels + offset, mean, width=width, label=f"[{attr}]", color=matplotlib.cm.tab20(multiplier / 26.0))
+        ax.bar_label(rects, padding=2, fmt='%.4f', fontsize=6, color='black', rotation=90, label_type='edge')
+        multiplier += 1.0
+    
+    ax.set_title("Average Levenshtein Distance: [A]-Letter vs. [X]-Letter Words")
+    ax.set_xlabel("Target Letter")
+    ax.set_ylabel("Average Levenshtein Distance")
+    
+    ax.set_xticks(x_labels + width, letters)
+    ax.set_xticklabels(letters, rotation=45)
+    ax.set_ylim(min(min(averages[l]) for l in letters) - 0.05, max(max(averages[l]) for l in letters) + 0.25)
+    ax.legend(loc='lower left', ncols=7, title="Target Letter")
+    
+    #plt.tight_layout()
+    plt.savefig("levenshtein_bargraph.png")
+    plt.show()
 
 # -----------------------------
 # 🚀 MAIN LOGIC
 # -----------------------------
 
+def main():
+    log_console_header("Best Phonetic Alphabet Utility")
+    print("Choose an option:")
+    print("1. Generate Word Averages")
+    print("2. Generate Distance Matrices")
+    print("3. Find Best Randomized Trial")
+    print("4. Plot Graph")
+    print("5. Plot Levenshtein Bar Graph")
+    print("Q. Quit")
+    choice = input("Enter your choice (1/2/3/4/5/Q): ").strip().lower()
 
-# write_phoneme_distance_matrix("phoneme_distances.csv")
+    # Load dictionaries only if needed
+    if choice in ['1', '2', '3']:
+        log_console_header("Loading and Cleaning CMU Dictionary")
 
-# Find optimal diverse word set (random trial or exhaustive)
-#print("🔍 Searching for the most phonetically diverse set of words...")
-#selected_words, score = find_best_set_randomized(words_by_letter, trials=TRIALS)
+        # Load the CMU Pronouncing Dictionary and create the phoneme distance dictionary
+        nltk.download('cmudict')
+        nltk.download('wordnet')
 
-# Print result
-#print("\n📋 Selected Words (Most Phonetically Diverse A–Z):")
-#for word in selected_words:
-#    print(f"{word.capitalize():<12}  ->  {' '.join(pron_dict[word][0])}")
-#print(f"\n🔢 Total Phoneme Distance Score: {score}")
+        PHONEME_DICT = get_cleaned_cmu_dict()
+        PHONEME_DISTANCE_DICT = get_phoneme_distance_dict()
+        WORDS_BY_LETTER = defaultdict(list)
+        for word in PHONEME_DICT.keys():
+            WORDS_BY_LETTER[word[0].upper()].append(word)
 
+    if choice == '1':
+        log_console_header("Generating Word Averages")
+        write_word_averages(PHONEME_DICT, PHONEME_DISTANCE_DICT)
+    elif choice == '2':
+        log_console_header("Generating Distance Matrices")
+        print("Which type of matrix?")
+        print("1. Levenshtein")
+        print("2. Phoneme")
+        print("3. Shared Phoneme Sequence")
+        print("4. All Three Types")
+        matrix_choice = input("Enter your choice (1/2/3/4): ").strip()
+        if matrix_choice in {"1", "2", "3", "4"}:
+            print("\nWARNING: This operation may take a long time and will generate a large number of files where you downloaded the repo!")
+            print("Press Enter to continue or Ctrl+C to cancel.")
+            input()
+        matrix_types = {"1": ["levenshtein"], "2": ["phoneme"], "3": ["shared"], "4": ["levenshtein", "phoneme", "shared"]}
+        for matrix_type in matrix_types.get(matrix_choice, ["levenshtein"]):
+            write_distance_matrix(PHONEME_DICT, PHONEME_DISTANCE_DICT, WORDS_BY_LETTER, matrix_type)
+    elif choice == '3':
+        log_console_header("Finding Best Randomized Trial")
+        best_scores, best_set, best_levenshtein, best_phoneme, best_shared = find_best_set_randomized(
+            PHONEME_DICT, PHONEME_DISTANCE_DICT, WORDS_BY_LETTER, TRIALS
+        )
+        # Log best sets
+        log_scores(best_scores['best levenshtein'], "Levenshtein Distance", best_levenshtein, PHONEME_DICT)
+        log_scores(best_scores['best phoneme'], "Phoneme Distance", best_phoneme, PHONEME_DICT)
+        log_scores(best_scores['best shared'], "Shared Phoneme Sequence Count", best_shared, PHONEME_DICT)
+        log_scores(best_scores['score'], "Overall", best_set, PHONEME_DICT)
+    elif choice == '4':
+        log_console_header("Plotting Levenshtein Cluster Graph")
+        plot_graph()
+    elif choice == '5':
+        log_console_header("Plotting Levenshtein Bar Graph")
+        plot_a_word_levenshtein_bargraph()
+    elif choice == 'q':
+        log_console_header("Exiting Program")
+        return
+    else:
+        print("Invalid choice. Please run the program again.")
 
-
-
-
-# -----------------------------
-# 📈 GRAPH VISUALIZATION
-# -----------------------------
-
-# Build graph
-# G = nx.Graph()
-# for word in selected_words:
-#     G.add_node(word)
-# 
-# for w1, w2 in combinations(selected_words, 2):
-#     dist = compute_phoneme_distance(w1, w2)
-#     G.add_edge(w1, w2, weight=dist)
-# 
-# # Draw graph
-# plt.figure(figsize=(15, 12))
-# pos = nx.spring_layout(G, weight='weight', seed=42)
-# nx.draw(G, pos, with_labels=True, node_color='lightblue', edge_color='gray', font_size=10)
-# plt.title("Phoneme Dissimilarity Graph for Selected Words")
-# plt.show()
+if __name__ == "__main__":
+    main()
