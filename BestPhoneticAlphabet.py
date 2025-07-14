@@ -326,7 +326,7 @@ Normalize a phoneme list by removing stress digits.
 def normalize_phoneme(p_list):
     return [p[:-1] if p[-1].isdigit() else p for p in p_list]
 
-def candidate_gen(trials, letters, words_by_letter, preselected_by_letter=None):
+def candidate_gen(trials, letters, words_by_letter, preselected_by_letter=None, word_averages=None):
     for _ in range(trials):
         candidate = []
         for le in letters:
@@ -598,222 +598,6 @@ def find_best_set_randomized(p_dict, p_distance_dict, p_audio_dist_dict, words_b
 
     log_console_header(f"Top {TOP_N} candidates for each metric saved to 'best_random_search.csv'")
     return best_scores
-
-def genetic_algorithm_phonetic_alphabet(
-    p_dict, 
-    p_distance_dict, 
-    p_audio_dist_dict, 
-    words_by_letter, 
-    population_size=100,
-    generations=1000,
-    mutation_rate=0.1,
-    crossover_rate=0.8,
-    elite_size=10,
-    tournament_size=5
-):
-    """
-    Genetic Algorithm to find the best 26-word phonetic alphabet.
-    
-    Args:
-        p_dict: Phoneme dictionary
-        p_distance_dict: Phoneme distance dictionary  
-        p_audio_dist_dict: Audio distance dictionary
-        words_by_letter: Dictionary of words grouped by first letter
-        population_size: Number of individuals in population
-        generations: Number of generations to evolve
-        mutation_rate: Probability of mutation per gene
-        crossover_rate: Probability of crossover
-        elite_size: Number of best individuals to keep each generation
-        tournament_size: Size of tournament for selection
-    
-    Returns:
-        Best individual found and its fitness score
-    """
-    log_console_header("Starting Genetic Algorithm for Phonetic Alphabet")
-    
-    letters = list(string.ascii_uppercase)
-    
-    def create_individual():
-        """Create a random individual (26-word alphabet)"""
-        return [random.choice(words_by_letter[letter]) for letter in letters]
-    
-    def fitness(individual):
-        """Calculate fitness score for an individual"""
-        try:
-            result = _score_candidate(individual, p_dict, p_distance_dict, p_audio_dist_dict)
-            return result["score"]
-        except Exception:
-            return float('-inf')  # Invalid individual
-    
-    def tournament_selection(population, fitness_scores, tournament_size):
-        """Select parent using tournament selection"""
-        tournament_indices = random.sample(range(len(population)), tournament_size)
-        tournament_fitness = [fitness_scores[i] for i in tournament_indices]
-        winner_idx = tournament_indices[tournament_fitness.index(max(tournament_fitness))]
-        return population[winner_idx]
-    
-    def crossover(parent1, parent2):
-        """Single-point crossover between two parents"""
-        if random.random() > crossover_rate:
-            return parent1[:], parent2[:]  # No crossover
-        
-        crossover_point = random.randint(1, 25)  # Don't include endpoints
-        child1 = parent1[:crossover_point] + parent2[crossover_point:]
-        child2 = parent2[:crossover_point] + parent1[crossover_point:]
-        return child1, child2
-    
-    def mutate(individual):
-        """Mutate an individual by changing some words"""
-        mutated = individual[:]
-        for i in range(26):
-            if random.random() < mutation_rate:
-                letter = letters[i]
-                mutated[i] = random.choice(words_by_letter[letter])
-        return mutated
-    
-    # Initialize population
-    log_console_header("Initializing Population", population_size)
-    population = [create_individual() for _ in range(population_size)]
-    
-    # Track best individuals across all generations
-    best_ever_individual = None
-    best_ever_fitness = float('-inf')
-    generation_stats = []
-    
-    # Evolution loop
-    for generation in tqdm(range(generations), desc="Evolving Generations", unit="generation", colour="green", leave=False):
-        
-        # Evaluate fitness for all individuals
-        fitness_scores = []
-        for individual in tqdm(population, desc=f"Gen {generation+1}: Evaluating Fitness", unit="individual", colour="blue", leave=False):
-            fitness_scores.append(fitness(individual))
-        
-        # Track statistics
-        max_fitness = np.max(fitness_scores)
-        avg_fitness = np.mean(fitness_scores)
-        min_fitness = np.min(fitness_scores)
-        
-        generation_stats.append({
-            'generation': generation,
-            'max_fitness': max_fitness,
-            'avg_fitness': avg_fitness,
-            'min_fitness': min_fitness
-        })
-        
-        # Update best ever
-        if max_fitness > best_ever_fitness:
-            best_ever_fitness = max_fitness
-            best_ever_individual = population[fitness_scores.index(max_fitness)][:]
-        
-        # Selection and reproduction
-        new_population = []
-        
-        # Elitism: Keep best individuals
-        elite_indices = sorted(range(len(fitness_scores)), key=lambda i: fitness_scores[i], reverse=True)[:elite_size]
-        for idx in elite_indices:
-            new_population.append(population[idx][:])
-        
-        # Generate offspring to fill rest of population
-        while len(new_population) < population_size:
-            # Select parents
-            parent1 = tournament_selection(population, fitness_scores, tournament_size)
-            parent2 = tournament_selection(population, fitness_scores, tournament_size)
-            
-            # Crossover
-            child1, child2 = crossover(parent1, parent2)
-            
-            # Mutation
-            child1 = mutate(child1)
-            child2 = mutate(child2)
-            
-            new_population.extend([child1, child2])
-        
-        # Trim to exact population size
-        population = new_population[:population_size]
-    
-    # Final evaluation and results
-    log_console_header("Genetic Algorithm Complete")
-    log_console_header("Best Individual Found", f"Fitness: {best_ever_fitness:.2f}")
-    
-    # Save results to CSV
-    with open("genetic_algorithm_results.csv", "w", newline="") as f:
-        writer = csv.writer(f)
-        
-        # Write generation statistics
-        writer.writerow(["Generation", "Max Fitness", "Avg Fitness", "Min Fitness"])
-        for stats in generation_stats:
-            writer.writerow([stats['generation'], stats['max_fitness'], 
-                           stats['avg_fitness'], stats['min_fitness']])
-        
-        writer.writerow([])  # Empty row
-        writer.writerow(["Best Individual Found:"])
-        writer.writerow(["Letter", "Word", "Phonemes"])
-        
-        for i, word in enumerate(best_ever_individual):
-            letter = letters[i]
-            phonemes = ' '.join(p_dict[word][0]) if word in p_dict else "N/A"
-            writer.writerow([letter, word, phonemes])
-    
-    log_console_header("Results saved to 'genetic_algorithm_results.csv'")
-    
-    return best_ever_individual, best_ever_fitness
-
-def genetic_algorithm_with_preselected(
-    p_dict, 
-    p_distance_dict, 
-    p_audio_dist_dict, 
-    words_by_letter,
-    preselected_words=None,
-    **kwargs
-):
-    """
-    Genetic Algorithm variant that respects preselected words.
-    
-    Args:
-        preselected_words: List of words that must be included (locks their letters)
-        **kwargs: Other parameters passed to main GA function
-    """
-    
-    # Process preselected words
-    preselected_by_letter = {}
-    if preselected_words:
-        for word in preselected_words:
-            letter = word[0].upper()
-            preselected_by_letter[letter] = word.lower()
-    
-    letters = list(string.ascii_uppercase)
-    
-    def create_individual():
-        """Create individual respecting preselected constraints"""
-        individual = []
-        for letter in letters:
-            if letter in preselected_by_letter:
-                individual.append(preselected_by_letter[letter])
-            else:
-                individual.append(random.choice(words_by_letter[letter]))
-        return individual
-    
-    def mutate(individual):
-        """Mutate only non-preselected positions"""
-        mutated = individual[:]
-        mutation_rate = kwargs.get('mutation_rate', 0.1)
-        
-        for i in range(26):
-            letter = letters[i]
-            if letter not in preselected_by_letter and random.random() < mutation_rate:
-                mutated[i] = random.choice(words_by_letter[letter])
-        return mutated
-    
-    # Override functions in kwargs
-    kwargs['create_individual'] = create_individual
-    kwargs['mutate'] = mutate
-    
-    log_console_header("Starting Genetic Algorithm with Preselected Words", 
-                      f"Locked letters: {list(preselected_by_letter.keys())}")
-    
-    return genetic_algorithm_phonetic_alphabet(
-        p_dict, p_distance_dict, p_audio_dist_dict, words_by_letter, **kwargs
-    )
 
 # --------------
 # WRITE CSV FUNCTIONS
@@ -1439,9 +1223,7 @@ def main():
         '3': "Generate Letter Averages",
         '4': "Generate Word Averages",
         '5': "Find Best (Randomized Trial)",
-        '6': "Score Premade Alphabet",
-        '7': "Genetic Algorithm Search",
-        '8': "Genetic Algorithm with Constraints"
+        '6': "Score Premade Alphabet"
     }
 
     log_console_header("Best Phonetic Alphabet Utility")
@@ -1493,43 +1275,6 @@ def main():
         logging.info("--------------------------------")
         for word in NATO:
             logging.info("%-8s  ->  %s", word.capitalize(), ' '.join(PHONEME_DICT[word][0]))
-    
-    elif choice == "Genetic Algorithm Search":
-        log_console_header("Finding Best Phonetic Alphabet via Genetic Algorithm")
-        
-        # Basic genetic algorithm
-        best_individual, best_fitness = genetic_algorithm_phonetic_alphabet(
-            PHONEME_DICT, 
-            PHONEME_DISTANCE_DICT, 
-            PHONEME_AUDIO_DISTANCE_DICT, 
-            WORDS_BY_LETTER,
-            population_size=50,
-            generations=500,
-            mutation_rate=0.15,
-            crossover_rate=0.8
-        )
-        
-        # Log the results
-        logging.info("--------------------------------")
-        logging.info(f"Best GA Result (Fitness: {best_fitness:.2f}):")
-        logging.info("--------------------------------")
-        for i, word in enumerate(best_individual):
-            letter = string.ascii_uppercase[i]
-            phonemes = ' '.join(PHONEME_DICT[word][0])
-            logging.info("%-3s: %-12s -> %s", letter, word.capitalize(), phonemes)
-    
-    # With preselected words
-    elif choice == "Genetic Algorithm with Constraints":
-        preselected = ["alpha", "bravo", "charlie"]  # Lock in some NATO words
-        best_individual, best_fitness = genetic_algorithm_with_preselected(
-            PHONEME_DICT, 
-            PHONEME_DISTANCE_DICT, 
-            PHONEME_AUDIO_DISTANCE_DICT, 
-            WORDS_BY_LETTER,
-            preselected_words=preselected,
-            population_size=50,
-            generations=300
-        )
 
     else:
         print("Exiting Program.")
