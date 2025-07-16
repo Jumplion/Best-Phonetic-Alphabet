@@ -335,21 +335,18 @@ def candidate_gen(trials, words_by_letter, preselected_by_letter=None):
             yield candidate
 
 def _score_candidate(selected_words, p_dict, p_distance_dict, p_audio_dist_dict, phoneme_suffix_length=2, weights=None):
-    total_levenshtein = total_phoneme_distance = total_phoneme_audio_dist = 0
-    shared_sequence_penalty = shared_suffix_penalty = 0
+    
+    total_levenshtein, total_phoneme_distance, total_phoneme_audio_dist = 0, 0, 0
+    shared_sequence_penalty, shared_suffix_penalty = 0, 0
     rhyme_penalty = 0
 
     vowels = [v for v in PHONEME_COORDINATES if PHONEME_COORDINATES[v][0] == 0]
     consonants = [c for c in PHONEME_COORDINATES if PHONEME_COORDINATES[c][0] == 1]
 
-    vowel_set = set()
-    consonant_set = set()
-    suffix_counts = {}
-    suffix_to_words = {}
-    phoneme_suffix_counts = {}
-    phoneme_suffix_to_words = {}
-    shared_sequences_list = []
-    shared_suffixes_list = []
+    vowel_set, consonant_set = set(), set()
+    suffix_counts, suffix_to_words = {}, {}
+    phoneme_suffix_counts, phoneme_suffix_to_words = {}, {}
+    shared_sequences_list, shared_suffixes_list = [], []
     rhyme_pairs = []
         
     # Pairwise comparisons
@@ -383,12 +380,12 @@ def _score_candidate(selected_words, p_dict, p_distance_dict, p_audio_dist_dict,
             p2 = normalize_phoneme(p_dict[w2][0])       
 
             total_levenshtein += editdistance.eval(w1, w2)
-            total_phoneme_distance += sum(p_distance_dict.get((ph1, ph2), 1) for ph1, ph2 in zip(p1, p2))
+            total_phoneme_coord_dist += sum(p_distance_dict.get((ph1, ph2), 1) for ph1, ph2 in zip(p1, p2))
             total_phoneme_audio_dist += sum(p_audio_dist_dict.get((ph1, ph2), 1) for ph1, ph2 in zip(p1, p2))
 
             # Rhyme penalty (using CMU dictionary with stress)
-            # NOTE: Requires UN-NORMALIZED Phonemes (i.e., with stress markers)
-            # TODO: Probably doesn't actually work as intended tbh....
+            #   NOTE: Requires UN-NORMALIZED Phonemes (i.e., with stress markers)
+            #   TODO: Probably doesn't actually work as intended tbh....
             rhyme1 = extract_rhyme_portion(p_dict[w1][0])
             rhyme2 = extract_rhyme_portion(p_dict[w2][0])
             if rhyme1 and (rhyme1 == rhyme2):
@@ -417,16 +414,6 @@ def _score_candidate(selected_words, p_dict, p_distance_dict, p_audio_dist_dict,
             shared_suffix_penalty += (count - 1)
             shared_suffixes_list.append((f"phonemic: {suffix}", phoneme_suffix_to_words[suffix]))
 
-    # Normalizations [0-1 scale, divided by previously calculated averages among all the words (I should probably calculate these dynamically)]
-    lev_norm = (total_levenshtein - 1.0) / 9.0      # 9.0 is avg
-    phon_norm = total_phoneme_distance / 15.68      # 15.68 is avg
-    audio_norm = total_phoneme_audio_dist / 1000    # 1000 is avg
-    seq_norm = shared_sequence_penalty / 36.0       # 36 is max pairs in 9 phonemes
-    suffix_norm = shared_suffix_penalty / 36.0      # 36 is max pairs in 9 phonemes
-    rhyme_norm = rhyme_penalty / 25.0               # 25 is max pairs in 26 words
-    vowel_norm = len(vowel_set) / len(vowels)       # Vowel diversity bonus/penalty 
-    consonant_norm = len(consonant_set) / len(consonants)   # Consonant diversity bonus/penalty
-
     # Weights
     WEIGHT_LEVENSHTEIN =            weights["weight_levenshtein"] if weights is not None           else 1.0
     WEIGHT_PHONEME =                weights["weight_phoneme"] if weights is not None               else 1.0
@@ -438,27 +425,26 @@ def _score_candidate(selected_words, p_dict, p_distance_dict, p_audio_dist_dict,
     WEIGHT_AUDIO_DIVERSITY =        weights["weight_audio_diversity"] if weights is not None       else 1.0
 
     score = (
-        (WEIGHT_LEVENSHTEIN * lev_norm)
-        + (WEIGHT_PHONEME * phon_norm)
-        - (WEIGHT_SHARED_SEQ * seq_norm)
-        - (WEIGHT_SHARED_SUFFIX * suffix_norm)
-        - (WEIGHT_RHYME * rhyme_norm)
-        + (WEIGHT_VOWEL_DIVERSITY * vowel_norm)
-        + (WEIGHT_CONSONANT_DIVERSITY * consonant_norm)
-        + (WEIGHT_AUDIO_DIVERSITY * audio_norm)
-    ) * 100.0
+        (WEIGHT_LEVENSHTEIN     * total_levenshtein)
+        + (WEIGHT_PHONEME       * total_phoneme_coord_dist)
+        + (WEIGHT_AUDIO_DIVERSITY * total_phoneme_audio_dist)
+        + (WEIGHT_VOWEL_DIVERSITY       * (len(vowel_set) / len(vowels)))
+        + (WEIGHT_CONSONANT_DIVERSITY   * (len(consonant_set) / len(consonants)))
+        - (WEIGHT_SHARED_SEQ    * shared_sequence_penalty)
+        - (WEIGHT_SHARED_SUFFIX * shared_suffix_penalty)
+        - (WEIGHT_RHYME         * rhyme_penalty)
+    )
 
-    # Individual scores totaled
-
+    # Individual Candidate Scores totaled
     return {
         "score": score,
         "total_levenshtein": total_levenshtein,
-        "total_phoneme_distance": total_phoneme_distance,
+        "total_phoneme_distance": total_phoneme_coord_dist,
+        "phoneme_audio_distance": total_phoneme_audio_dist,
         "shared_sequence": (shared_sequence_penalty, shared_sequences_list),
         "shared_suffix": (shared_suffix_penalty, shared_suffixes_list),
         "rhyme": (rhyme_penalty, rhyme_pairs),
-        "vowel_diversity": vowel_norm,
-        "phoneme_audio_distance": audio_norm
+        "vowel_diversity": (len(vowel_set) / len(vowels)),
     }
 
 # --------------

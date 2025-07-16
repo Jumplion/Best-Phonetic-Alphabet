@@ -7,15 +7,16 @@
     "max_syllables": 3,
     
     "trials": 10000,
-    "penalize_length_variance": true,
-    "length_variance_weight": 10,
 
     "weight_levenshtein": 1.0,
     "weight_phoneme": 1.0,
+    "weight_audio_diversity": 1.0,
+
     "weight_shared_seq": 2.0,
     "weight_shared_suffix": 2.0,
+    
     "weight_rhyme": 2.0,
+
     "weight_vowel_diversity": 1.0,
-    "weight_consonant_diversity": 1.0,
-    "weight_audio_diversity": 1.0
+    "weight_consonant_diversity": 1.0
 }
