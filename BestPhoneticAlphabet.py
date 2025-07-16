@@ -997,7 +997,7 @@ def main():
     logging.info("Total Words: {:,}".format(len(PHONEME_DICT)))
     
     PHONEME_DISTANCE_DICT = get_phoneme_coord_distance_dict()
-    PHONEME_AUDIO_DISTANCE_DICT = get_phoneme_audio_difference_dict("Phoneme Voice Files")
+    PHONEME_AUDIO_DISTANCE_DICT = get_phoneme_audio_difference_dict()
     
     WORDS_BY_LETTER = defaultdict(list)
     for word in tqdm(PHONEME_DICT.keys(), desc="Grouping Words by First Letter", unit="word"):
