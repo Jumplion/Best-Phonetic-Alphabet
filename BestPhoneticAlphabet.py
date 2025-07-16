@@ -5,8 +5,9 @@ import random
 import logging
 import json
 import string
+import time
 from collections import defaultdict
-import concurrent.futures
+from turtle import distance
 
 # Scientific and Data Libraries
 import numpy as np
@@ -19,10 +20,6 @@ from nltk.stem import WordNetLemmatizer
 
 # Distance and Edit Libraries
 import editdistance
-from fastdtw import fastdtw
-
-# Audio Processing
-import librosa
 
 # 🔧 CONFIGURATION
 logging.basicConfig(
@@ -37,7 +34,8 @@ logging.basicConfig(
 
 LETTERS = list(string.ascii_uppercase)
 WORD_PAIR_FILENAME_TEMPLATE:str = "word_pairs_{0}_{1}_data.csv"
-WORD_PAIR_SCORES = defaultdict(dict)
+PHONEME_COORDINATE_DISTANCE_FILENAME:str = "phoneme_coordinate_distance.csv"
+PHONEME_AUDIO_DISTANCE_FILENAME:str = "phoneme_audio_distance.csv"
 LETTER_PAIR_FILENAME:str = "letter_pair_averages.csv"
 CSV_DISTANCE_HEADERS:list[str] = ["Source", "Target", "Score",
         "Source-Phonemes", "Target-Phonemes",
@@ -353,7 +351,7 @@ def _score_candidate(selected_words, p_dict, p_distance_dict, p_audio_dist_dict,
     shared_sequences_list = []
     shared_suffixes_list = []
     rhyme_pairs = []
-
+        
     # Pairwise comparisons
     for i in range(len(selected_words)):
         w1 = selected_words[i]
@@ -379,10 +377,11 @@ def _score_candidate(selected_words, p_dict, p_distance_dict, p_audio_dist_dict,
             phoneme_suffix_counts[phon_suffix] = phoneme_suffix_counts.get(phon_suffix, 0) + 1
             phoneme_suffix_to_words.setdefault(phon_suffix, []).append(w1)
         
+        # Compare to all subsequent words
         for j in range(i + 1, len(selected_words)):
             w2 = selected_words[j]
-            p2 = normalize_phoneme(p_dict[w2][0])
-            
+            p2 = normalize_phoneme(p_dict[w2][0])       
+
             total_levenshtein += editdistance.eval(w1, w2)
             total_phoneme_distance += sum(p_distance_dict.get((ph1, ph2), 1) for ph1, ph2 in zip(p1, p2))
             total_phoneme_audio_dist += sum(p_audio_dist_dict.get((ph1, ph2), 1) for ph1, ph2 in zip(p1, p2))
@@ -449,6 +448,8 @@ def _score_candidate(selected_words, p_dict, p_distance_dict, p_audio_dist_dict,
         + (WEIGHT_AUDIO_DIVERSITY * audio_norm)
     ) * 100.0
 
+    # Individual scores totaled
+
     return {
         "score": score,
         "total_levenshtein": total_levenshtein,
@@ -489,8 +490,12 @@ def find_best_set_randomized(p_dict, p_distance_dict, p_audio_dist_dict, words_b
             le = w[0].upper()
             preselected_by_letter[le] = min(preselected_by_letter[le], w) if le in preselected_by_letter else w
 
+    calculation_times = []
     for c in tqdm(candidate_gen(trials, words_by_letter, preselected_by_letter), total=trials, desc="Generating and Scoring Candidates", unit=" candidate", colour="green"):
+        start_time = time.time()
         results = _score_candidate(c, p_dict, p_distance_dict, p_audio_dist_dict)
+        calculation_times.append(time.time() - start_time)
+        
         candidate_entry = {
             "candidate": sorted(list(c)),
             "score": results["score"],
@@ -501,8 +506,8 @@ def find_best_set_randomized(p_dict, p_distance_dict, p_audio_dist_dict, words_b
         }
         
         # Define metrics with their data keys and sort directions
-        metrics_config = {
-            "score": (results["score"], True),  # (value, reverse_sort)
+        metrics_config = {   # (value, reverse_sort)
+            "score": (results["score"], True), 
             "levenshtein": (results["total_levenshtein"], True),
             "phoneme": (results["total_phoneme_distance"], True),
             "shared_sequence": (results["shared_sequence"][0], False),
@@ -519,7 +524,7 @@ def find_best_set_randomized(p_dict, p_distance_dict, p_audio_dist_dict, words_b
     log_console_header("Writing Top Candidates to CSV")
     headers = ["Metric", "Rank", "Value", "Score", "Total Levenshtein Distance", "Total Phoneme Distance", 
                "Total Shared Sequences", "Total Shared Suffixes"] + list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
-    
+
     with open("best_random_search.csv", "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(headers)
@@ -546,6 +551,7 @@ def find_best_set_randomized(p_dict, p_distance_dict, p_audio_dist_dict, words_b
         "seq": (top_candidates["shared_sequence"][0][0], top_candidates["shared_sequence"][0][1]["candidate"]) if top_candidates["shared_sequence"] else (float('inf'), []),
         "suffix": (top_candidates["shared_suffix"][0][0], top_candidates["shared_suffix"][0][1]["candidate"]) if top_candidates["shared_suffix"] else (float('inf'), []),
         "score": (top_candidates["score"][0][0], top_candidates["score"][0][1]["candidate"]) if top_candidates["score"] else (float('-inf'), []),
+        "avg_calc_time": np.mean(calculation_times) if calculation_times else 0.0
     }
 
     log_console_header(f"Top {TOP_N} candidates for each metric saved to 'best_random_search.csv'")
@@ -738,13 +744,40 @@ def write_word_averages(p_dict, p_distance_dict, p_audio_dist_dict, words_by_let
     log_console_header(f"Word averages saved to '{csv_filename}'")
     return word_averages
 
+def write_phoneme_coord_distance_dict():
+    # Sort PHONEME_COORDINATES by phoneme name for consistent ordering
+    distances = defaultdict(float)
+    sorted_phonemes = sorted(PHONEME_COORDINATES.keys())
+
+    for p1 in tqdm(sorted_phonemes, desc="Calculating Phoneme Distances", unit=" phoneme", colour="green"):
+        coord1 = PHONEME_COORDINATES[p1]
+        
+        # Calculate distance from origin (0, 0, 0, 0) to each phoneme coordinate
+        distances[(p1, "")] = distances[("", p1)] = math.sqrt(sum(a ** 2 for a in coord1))
+        distances[(p1, p1)] = 0.0
+
+        for p2 in sorted_phonemes:
+            if p1 < p2:
+                coord2 = PHONEME_COORDINATES[p2]
+                distances[(p1, p2)] = distances[(p2, p1)] = math.sqrt(sum((a - b) ** 2 for a, b in zip(coord1, coord2)))
+
+    # Save the phoneme distance dictionary to a file
+    with open(PHONEME_COORDINATE_DISTANCE_FILENAME, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["Phoneme 1", "Phoneme 2", "Distance"])
+        for (p1, p2), dist in tqdm(distances.items(), desc="Writing Phoneme Distance Dictionary", unit=" entry"):
+            writer.writerow([p1, p2, dist])
+    logging.info(f"Phoneme Coordinate Distance Dictionary Saved to '{PHONEME_COORDINATE_DISTANCE_FILENAME}'")
+
+    return distances
+
 # -------------------------------
 # READ CSV Functions
 # TODO: Extract Read file functions into a separate module
 # -------------------------------
 
 """ Reads a csv file for a specific letter pair (e.g., A-B) and returns it as a dictionary. """
-def read_word_pair_scores(target_letter, compare_letter):
+def read_letter_pair_scores(target_letter, compare_letter):
     filename = os.path.join("CSV Files", WORD_PAIR_FILENAME_TEMPLATE.format(target_letter, compare_letter))
     distance_dict = defaultdict(dict)
     if not os.path.exists(filename):
@@ -784,97 +817,83 @@ def read_word_averages():
 
     with open(filename, "r", newline="") as f:
         reader = csv.DictReader(f)
-        for row in tqdm(reader, desc="Reading Word Averages", unit="word", colour="blue"):
-            word_averages[row["Word"]] =  float(row["Avg_Score"])
+        for row in tqdm(reader, desc="Reading Word Averages", unit=" word", colour="blue"):
+            word_averages[row["Word"]] = float(row["Avg_Score"])
 
     return word_averages
+
+def lookup_word_pair_score(word1, word2, csv_dir="CSV Files"):
+    """
+    Efficiently look up the score for a word pair using the CSV file for their starting letters.
+    ####Optimization: If the 'Source' doesn't match, skip N rows where N = number of words starting with the 'Target' letter.
+    """
+    l1, l2 = word1[0].upper(), word2[0].upper()
+    if l1 == l2:
+        logging.warning(f"Both words start with the same letter: {l1}. Cannot look up score.")
+        return None
+
+    # Always sort letters to match filename convention
+    sorted_letters = sorted([l1, l2])
+    filename = os.path.join(csv_dir, WORD_PAIR_FILENAME_TEMPLATE.format(*sorted_letters))
+    if not os.path.exists(filename):
+        logging.warning(f"Distance matrix file '{filename}' does not exist.")
+        return None
+
+    # Determine which word is Source and which is Target in the file
+    if l1 < l2:
+        source_word, target_word = word1, word2
+    else:
+        source_word, target_word = word2, word1
+
+    with open(filename, "r", newline="") as f:
+        reader = csv.DictReader(f)
+
+        for row in tqdm(reader, desc=f"Looking up {source_word}-{target_word} score", unit="row", colour="blue"):
+            # Skip rows until we find the source word or run out of rows
+            if (row["Source"] == source_word and row["Target"] == target_word) or (row["Source"] == target_word and row["Target"] == source_word):
+                return {
+                    "levenshtein": float(row["Levenshtein Distance"]),
+                    "phoneme": float(row["Phoneme Distance"]),
+                    "shared": int(row["Shared Sequence Count"]),
+                    "score": float(row["Score"])
+                    }
+
+    logging.warning(f"No score found for {word1}-{word2}.")
+    return None
+
+def read_phoneme_difference_file(filename):
+    if os.path.exists(filename):
+        logging.info(f"Loading phoneme distances from '{filename}'...")
+        distances = defaultdict(float)
+        with open(filename, "r", newline="") as f:
+            reader = csv.reader(f)
+            next(reader)
+            for row in reader:
+                p1, p2, dist = row
+                distances[(p1, p2)] = distances[(p2, p1)] = float(dist)
+        return distances
+    else:
+        logging.error(f"Phoneme distance file '{filename}' does not exist!")
+        return None
 
 # -------------------------------
 # Dictionary Functions
 # -------------------------------
 
-def get_phoneme_distance_dict():
+def get_phoneme_coord_distance_dict():
+    distances = read_phoneme_difference_file(PHONEME_COORDINATE_DISTANCE_FILENAME)
+    if distances is None:
+        logging.info("Phoneme Coordinate Distance Dictionary does not exist. Creating it now.")
+        distances = write_phoneme_coord_distance_dict()
+    return distances
 
-    if os.path.exists("phoneme_distance_dict.csv"):
-        logging.info("Phoneme Distance Dictionary already exists. Loading from 'phoneme_distance_dict.csv'.")
-        distance = defaultdict(float)
-        with open("phoneme_distance_dict.csv", "r", newline="") as f:
-            reader = csv.reader(f)
-            next(reader)
-            for row in reader:
-                p1, p2, dist = row
-                distance[(p1, p2)] = distance[(p2, p1)] = float(dist)
-        return distance
-    
-    logging.info("Phoneme Distance Dictionary does not exist. Creating it now.")
-    phonemes = list(PHONEME_COORDINATES.keys())
-    distance = defaultdict(float)
-    for i, p1 in enumerate(phonemes):
-        coord1 = PHONEME_COORDINATES[p1]
-        distance[(p1, "")] = math.sqrt(sum (a ** 2 for a in coord1))
-        distance[("", p1)] = math.sqrt(sum (a ** 2 for a in coord1))
-        distance[(p1, p1)] = 0.0
+def get_phoneme_audio_difference_dict():
+    distances = read_phoneme_difference_file(PHONEME_AUDIO_DISTANCE_FILENAME)
+    if distances is None:
+        logging.info("Phoneme Audio Distance Dictionary does not exist. Run the 'connear_notebook.ipynb' to create it!")
+        distances = {}
+    return distances
 
-        for j, p2 in enumerate(phonemes):
-            if i < j:  # Avoid duplicate pairs
-                coord2 = PHONEME_COORDINATES[p2]
-                distance[(p1, p2)] = math.sqrt(sum((a - b) ** 2 for a, b in zip(coord1, coord2)))
-                distance[(p2, p1)] = math.sqrt(sum((a - b) ** 2 for a, b in zip(coord1, coord2)))
-
-    log_console_header("Phoneme Distance Dictionary Created | Total Phonemes", len(PHONEME_COORDINATES))
-    # Save the phoneme distance dictionary to a file
-    with open("phoneme_distance_dict.csv", "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["Phoneme 1", "Phoneme 2", "Distance"])
-        for (p1, p2), dist in tqdm(distance.items(), desc="Writing Phoneme Distance Dictionary", unit=" entry"):
-            writer.writerow([p1, p2, dist])
-    logging.info("Phoneme Distance Dictionary Saved to 'phoneme_distance_dict.csv'")
-    
-    # Return the distance dictionary 
-    return distance
-
-# TODO: Separate this into the audio processing module
-def get_phoneme_audio_difference_dict(base_folder="Phoneme Voice Files", target_sr=22050, phoneme_file_template="_normalized.wav"):
-    dist_matrix = defaultdict(float)
-
-    if os.path.exists("phoneme_audio_difference_matrix.csv"):
-        logging.info("Phoneme Audio Distance Matrix already exists. Loading from 'phoneme_audio_difference_matrix.csv'.")
-        with open("phoneme_audio_difference_matrix.csv", "r", newline="") as f:
-            reader = csv.reader(f)
-            next(reader)
-            for row in reader:
-                p1, p2, dist = row
-                dist_matrix[(p1, p2)] = dist_matrix[(p2, p1)] = float(dist)
-        return dist_matrix
-
-    logging.info("Phoneme Audio Distance Matrix does not exist. Creating it now.")
-    phonemes = list(PHONEME_COORDINATES.keys())
-    waveforms = {}
-
-    for ph in phonemes:
-        path = os.path.join(base_folder, ph, f"{ph}{phoneme_file_template}")
-        if not os.path.exists(path):
-            logging.warning("Medoid waveform not found for phoneme: %s", ph)
-            continue
-        y, _ = librosa.load(path, sr=target_sr)
-        y = librosa.util.normalize(y)
-        waveforms[ph] = y
-
-
-    for i, p1 in tqdm(enumerate(waveforms.keys()), total=len(waveforms.keys()), desc="Computing Distances", unit=" phoneme"):
-        dist_matrix[(p1, "")] = dist_matrix[("", p1)] = dist_matrix[(p1, p1)] = 0.0
-        for j, p2 in tqdm(enumerate(waveforms.keys()), total=len(waveforms.keys()), desc=f"Computing distances for {p1}", unit=" phoneme", leave=False):
-            if i != j:
-                dist, _ = fastdtw(waveforms[p1], waveforms[p2], dist=lambda x, y: np.abs(x - y))
-                dist_matrix[(p1, p2)] = dist_matrix[(p2, p1)] = dist
-
-    with open("phoneme_audio_difference_matrix.csv", "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["Phoneme 1", "Phoneme 2", "Distance"])
-        for (p1, p2), dist in tqdm(dist_matrix.items(), total=len(dist_matrix), desc="Writing Phoneme Distance Dictionary", unit=" entry"):
-            writer.writerow([p1, p2, dist])
-
-    return dist_matrix
 
 """ Clean the CMU Pronouncing Dictionary and apply filters.
 - Filters out words with non-alphabetic characters, too short/long words, blacklisted words, etc.
@@ -897,47 +916,45 @@ def get_cleaned_cmu_dict():
 
     cleaned_dict = cmudict.dict()
     cleaned_dict = {
-        word: prons for word, prons in tqdm(cleaned_dict.items(), desc="Cleaning CMU Dictionary", unit="word")
+        w: prons for w, prons in tqdm(cleaned_dict.items(), desc="Cleaning CMU Dictionary", unit=" word")
         if (
-            (word in WORD_WHITELIST) or
-            (word.isalpha()) and
-            (word not in WORD_BLACKLIST) and
-            (not any(word.startswith(prefix) for prefix in PREFIX_FILTERS)) and
-            (len(prons[0]) >= min_phoneme_length) and
-            (len(prons[0]) <= max_phoneme_length) and
-            (len(word) >= min_word_length) and
-            (len(word) <= max_word_length) and
-            (len(set(word)) > 1) and
-            (not any(word.startswith(prefix) for prefix in BANNED_PHONEME_PREFIXES.get(word[0].lower(), []))) and
-            (wordnet.synsets(word)) and
-            (min_syllables <= len([p for p in prons[0] if p[-1].isdigit()]) <= max_syllables) and
-            (word_averages[word] >= min_avg)
+            (w in WORD_WHITELIST) or
+            (
+                (w not in WORD_BLACKLIST) and
+                (w.isalpha()) and
+                (min_phoneme_length <= len(prons[0]) <= max_phoneme_length) and
+                (min_word_length <= len(w) <= max_word_length) and
+                (min_syllables <= len([p for p in prons[0] if p[-1].isdigit()]) <= max_syllables) and
+                (wordnet.synsets(w)) and
+                (not any(w.startswith(prefix) for prefix in PREFIX_FILTERS)) and
+                (not any(w.startswith(prefix) for prefix in BANNED_PHONEME_PREFIXES.get(w[0].lower(), []))) and
+                (word_averages[w] >= min_avg)
+            )
         )
     }              
 
     lemmatizer = WordNetLemmatizer()
     lemma_map = defaultdict(list)
     
-    # Lemmatize the words, group by lemma
-    for word, prons in tqdm(cleaned_dict.items(), desc="Lemmatizing Words", unit="word"):       
-        noun = lemmatizer.lemmatize(word.lower(), pos='n')
+    # Lemmatize the words, group by lemma (in cleaned dictionary)
+    for w, prons in tqdm(cleaned_dict.items(), desc="Lemmatizing Words", unit=" word"):
+        noun = lemmatizer.lemmatize(w.lower(), pos='n')
         lemma = lemmatizer.lemmatize(noun, pos='v')
-        lemma_map[lemma].append((word, prons[0]))
+        lemma_map[lemma].append((w, prons[0]))
 
     # Choose representative word for each lemma (shortest spelling)
-    temp_dict = {}
+    lemma_dict = {}
     for lemma, variants in lemma_map.items():
         representative = min(variants, key=lambda x: len(x[0]))
-        temp_dict[representative[0]] = [representative[1]]  # keep as list for CMU compatibility 
+        lemma_dict[representative[0]] = [representative[1]]  # keep as list for CMU compatibility 
     
-    cleaned_dict = temp_dict
+    cleaned_dict = lemma_dict
 
     # Add Custom Words to the dictionary
-    for word, pron in CUSTOM_WORDS.items():
-        cleaned_dict[word.lower()] = [pron]
+    for w, pron in CUSTOM_WORDS.items():
+        cleaned_dict[w.lower()] = [pron]
 
     logging.info("CMU Pronouncing Dictionary Cleaned | Total Words: %d", len(cleaned_dict))
-
     return cleaned_dict
 
 # -------------------------------
@@ -969,7 +986,7 @@ def load_user_settings(settings_path="user_settings.json"):
 def main():
 
     user_settings = load_user_settings()
-    TRIALS = 1000000 #user_settings["trials"]
+    TRIALS = 10000 #user_settings["trials"]
 
     log_console_header("Loading and Cleaning CMU Dictionary")
     # Load the CMU Pronouncing Dictionary and create the phoneme distance dictionary
@@ -979,7 +996,7 @@ def main():
     PHONEME_DICT = get_cleaned_cmu_dict()
     logging.info("Total Words: {:,}".format(len(PHONEME_DICT)))
     
-    PHONEME_DISTANCE_DICT = get_phoneme_distance_dict()
+    PHONEME_DISTANCE_DICT = get_phoneme_coord_distance_dict()
     PHONEME_AUDIO_DISTANCE_DICT = get_phoneme_audio_difference_dict("Phoneme Voice Files")
     
     WORDS_BY_LETTER = defaultdict(list)
@@ -1022,11 +1039,12 @@ def main():
     elif choice == "Find Best (Randomized Trial)":
         log_console_header("Finding Best Phonetic Alphabet via Randomized Trial")
         best_scores = find_best_set_randomized(PHONEME_DICT, PHONEME_DISTANCE_DICT, PHONEME_AUDIO_DISTANCE_DICT, WORDS_BY_LETTER, TRIALS)
+        log_console_header(f"Best Scores Found in {TRIALS} Trials")
+        logging.info("Average Calculation Time: %.6f seconds", best_scores['avg_calc_time'])
         
         # Log best sets
         log_scores("Levenshtein Distance", best_scores['levenshtein'], PHONEME_DICT)
         log_scores("Phoneme Distance", best_scores['phoneme'], PHONEME_DICT)
-        log_scores("Shared Phoneme Sequence Count", best_scores['seq'], PHONEME_DICT)
         log_scores("Overall", best_scores['score'], PHONEME_DICT)
     
     elif choice == "Score Premade Alphabet":
