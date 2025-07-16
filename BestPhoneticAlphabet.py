@@ -335,8 +335,8 @@ def candidate_gen(trials, words_by_letter, preselected_by_letter=None):
             yield candidate
 
 def _score_candidate(selected_words, p_dict, p_distance_dict, p_audio_dist_dict, phoneme_suffix_length=2, weights=None):
-    
-    total_levenshtein, total_phoneme_distance, total_phoneme_audio_dist = 0, 0, 0
+
+    total_levenshtein, total_phoneme_coord_dist, total_phoneme_audio_dist = 0, 0, 0
     shared_sequence_penalty, shared_suffix_penalty = 0, 0
     rhyme_penalty = 0
 
