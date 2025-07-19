@@ -213,27 +213,27 @@ For example, "E" words shouldn't start with "y" like "eunuch" or "euphoria"
 BANNED_PHONEME_PREFIXES = {
     "a" : [],
     "b" : [],
-    "c" : ["S"],
+    "c" : ["S"],        # "cereal", "cell"
     "d" : [],
-    "e" : ["ER", "Y"],
+    "e" : ["ER", "Y"],  # "ernest" | "eunuch", "euphoria"
     "f" : [],
-    "g" : [],
-    "h" : [],
+    "g" : ["N"],        # "gnome"
+    "h" : ["AW", "OW"], # "hour"
     "i" : [],
     "j" : [],
-    "k" : [],
+    "k" : ["N"],        # "knight"
     "l" : [],
-    "m" : ["N"],
+    "m" : ["N"],        # "mnemonic"
     "n" : [],
     "o" : [],
-    "p" : ["F"],
+    "p" : ["F"],        # "phone", "philosophy"
     "q" : [],
     "r" : [],
-    "s" : ["SH"],
-    "t" : ["TH", "DH"],
+    "s" : ["SH"],       # "she", "sure"
+    "t" : ["TH", "DH"], # "this" | "that"
     "u" : [],
     "v" : [],    
-    "w" : ["R"],
+    "w" : ["R", "HH"],  # 'wrestle' | 'whole'
     "x" : [],
     "y" : [],
     "z" : []
@@ -368,25 +368,27 @@ def candidate_gen(trials, words_by_letter, preselected_by_letter=None):
         if len(candidate) == len(LETTERS):
             yield candidate
 
-def _score_candidate(selected_words, p_dict, phoneme_suffix_length=2, weights=None):
+def _score_candidate(selected_words, p_norm_dict, p_coordinates, 
+                     p_indices, p_coord_matrix, p_audio_matrix,
+                     phoneme_suffix_length=2, weights=None):
 
     total_levenshtein, total_phoneme_coord_dist, total_phoneme_audio_dist = 0, 0, 0
     shared_sequence_penalty, shared_suffix_penalty = 0, 0
     rhyme_penalty = 0
 
-    vowels = [v for v in PHONEME_COORDINATES if PHONEME_COORDINATES[v][0] == 0]
-    consonants = [c for c in PHONEME_COORDINATES if PHONEME_COORDINATES[c][0] == 1]
+    vowels = [v for v in p_coordinates if p_coordinates[v][0] == 0]
+    consonants = [c for c in p_coordinates if p_coordinates[c][0] == 1]
 
     vowel_set, consonant_set = set(), set()
     suffix_counts, suffix_to_words = {}, {}
     phoneme_suffix_counts, phoneme_suffix_to_words = {}, {}
     shared_sequences_list, shared_suffixes_list = [], []
     rhyme_pairs = []
-        
+
     # Pairwise comparisons
     for i in range(len(selected_words)):
         w1 = selected_words[i]
-        p1 = PHONEME_DICT_NORMALIZED[w1]
+        p1 = p_norm_dict[w1]
 
         # Collect vowels and consonants
         for p in p1:
@@ -395,7 +397,7 @@ def _score_candidate(selected_words, p_dict, phoneme_suffix_length=2, weights=No
             if p in consonants:
                 consonant_set.add(p)
 
-        # Collect orthographic suffixes (2-5 characters)
+        # Collect orthographic suffixes of the current word (2-5 characters)
         word_len = len(w1)
         for slen in range(2, min(6, word_len + 1)):
             suffix = w1[-slen:]
@@ -411,40 +413,39 @@ def _score_candidate(selected_words, p_dict, phoneme_suffix_length=2, weights=No
         # Compare to all subsequent words
         for j in range(i + 1, len(selected_words)):
             w2 = selected_words[j]
-            p2 = PHONEME_DICT_NORMALIZED[w2]
+            p2 = p_norm_dict[w2]
 
             total_levenshtein += editdistance.eval(w1, w2)
             
             # --- Vectorized phoneme COORD distance ---
-            idx1 = np.array([PHONEME_MATRIX_INDEX.get(ph, -1) for ph in p1])
-            idx2 = np.array([PHONEME_MATRIX_INDEX.get(ph, -1) for ph in p2])
+            idx1 = p_indices[w1]
+            idx2 = p_indices[w2]
 
             min_len = min(len(idx1), len(idx2))
+
+            # For some reason this is needed? When is the min_length 0?
             if min_len > 0:
                 idx1 = idx1[:min_len]
                 idx2 = idx2[:min_len]
 
-                pairwise = PHONEME_COORD_MATRIX[idx1, idx2]
-                pairwise = np.where((idx1 == -1) | (idx2 == -1), 1.0, pairwise)
+                pairwise_coord = p_coord_matrix[idx1, idx2]
+                pairwise_coord = np.where((idx1 == -1) | (idx2 == -1), 1.0, pairwise_coord)
 
-                total_phoneme_coord_dist += np.sum(pairwise)
-
-            # --- Vectorized phoneme AUDIO distance ---
-            if min_len > 0:
-                pairwise_audio = PHONEME_AUDIO_MATRIX[idx1, idx2]
+                pairwise_audio = p_audio_matrix[idx1, idx2]
                 pairwise_audio = np.where((idx1 == -1) | (idx2 == -1), 1.0, pairwise_audio)
 
+                total_phoneme_coord_dist += np.sum(pairwise_coord)
                 total_phoneme_audio_dist += np.sum(pairwise_audio)
 
 
             # Rhyme penalty (using CMU dictionary with stress)
             #   NOTE: Requires UN-NORMALIZED Phonemes (i.e., with stress markers)
             #   TODO: Probably doesn't actually work as intended tbh....
-            rhyme1 = extract_rhyme_portion(p_dict[w1][0])
-            rhyme2 = extract_rhyme_portion(p_dict[w2][0])
-            if rhyme1 and (rhyme1 == rhyme2):
-                rhyme_penalty += 1
-                rhyme_pairs.append((w1, w2, rhyme1))
+            #rhyme1 = extract_rhyme_portion(p_dict[w1][0])
+            #rhyme2 = extract_rhyme_portion(p_dict[w2][0])
+            #if rhyme1 and (rhyme1 == rhyme2):
+            #    rhyme_penalty += 1
+            #    rhyme_pairs.append((w1, w2, rhyme1))
 
             # Shared phoneme sub-sequences (n-grams)
             ngram_max = min(len(p1), len(p2))
@@ -509,7 +510,9 @@ def _score_candidate(selected_words, p_dict, phoneme_suffix_length=2, weights=No
 """ Find the best set of words via random sampling.
 Randomized search for best phonetic alphabet, allowing for preselected words.
 """
-def find_best_set_randomized(p_dict, words_by_letter, trials=1000, preselected_words=None, top_candidates=100):
+def find_best_set_randomized(words_by_letter, p_norm_dict, 
+                                p_coordinates, p_indices, p_coord_matrix, p_audio_matrix,
+                                trials=1000, preselected_words=None, top_candidates=100):
 
     log_console_header("Starting Randomized Search for Best Set of Words", trials)
     
@@ -527,7 +530,10 @@ def find_best_set_randomized(p_dict, words_by_letter, trials=1000, preselected_w
     calculation_times = []
     for c in tqdm(candidate_gen(trials, words_by_letter, preselected_by_letter), total=trials, desc="Generating and Scoring Candidates", unit=" candidate", colour="green"):
         start_time = time.time()
-        results = _score_candidate(c, p_dict)
+        results = _score_candidate(selected_words=c, p_norm_dict=p_norm_dict, 
+                                      p_coordinates=p_coordinates, p_indices=p_indices,
+                                      p_coord_matrix=p_coord_matrix, p_audio_matrix=p_audio_matrix,
+                                      phoneme_suffix_length=2, weights=None)
         calculation_times.append(time.time() - start_time)
         
         candidate_entry = {
@@ -619,7 +625,7 @@ def write_word_pair_scores(p_dict, words_by_letters):
                 
                 # Calculate distances for each word pair
                 for w1, w2 in tqdm(pairs, total=len(pairs), desc=f"Calculating and Writing to CSV: {l1}_{l2}", unit=" word pair", leave=False, colour="yellow"):
-                    data = _score_candidate([w1, w2], p_dict)                  
+                    data = _score_candidate([w1, w2])                  
                     p1, p2 = p_dict[w1][0], p_dict[w2][0]
                     # Write the data to the main CSV file   
                     writer.writerow([w1, w2, data["score"],
@@ -670,7 +676,7 @@ def write_word_averages(p_dict, words_by_letter):
                 if letter2 == letter1:
                     continue
                 for other_word in tqdm(words_by_letter[letter2], desc=f"Scoring {word}", unit="comparison", leave=False, colour="blue"):
-                    result = _score_candidate([word, other_word], p_dict, p_distance_dict, p_audio_dist_dict, phoneme_suffix_length=2, weights=None)
+                    result = _score_candidate([word, other_word])
                     scores["score"].append(result["score"])
                     scores["total_levenshtein"].append(result["total_levenshtein"])
                     scores["total_phoneme_distance"].append(result["total_phoneme_distance"])
@@ -712,7 +718,6 @@ def write_phoneme_coord_distance_dict():
         coord1 = PHONEME_COORDINATES[p1]
         
         # Calculate distance from origin (0, 0, 0, 0) to each phoneme coordinate
-        distances[(p1, "")] = distances[("", p1)] = math.sqrt(sum(a ** 2 for a in coord1))
         distances[(p1, p1)] = 0.0
 
         for p2 in sorted_phonemes:
@@ -863,6 +868,8 @@ def get_cleaned_cmu_dict():
 
     # Get user settings
     settings = load_user_settings()
+    
+    # Get Settings
     min_phoneme_length = settings["min_phoneme_length"]
     max_phoneme_length = settings["max_phoneme_length"]
     min_word_length = settings["min_word_length"]
@@ -870,26 +877,35 @@ def get_cleaned_cmu_dict():
     min_syllables = settings["min_syllables"]
     max_syllables = settings["max_syllables"]
 
+    # Get Filters
+    filter_phoneme_length = settings["filter_phoneme_length"]
+    filter_word_length = settings["filter_word_length"]
+    filter_syllables = settings["filter_syllables"]
+    filter_letter_prefixes = settings["filter_letter_prefixes"]
+    filter_phoneme_prefixes = settings["filter_phoneme_prefixes"]
+    filter_averages = settings["filter_averages"]
+
     word_averages = read_word_averages()
     if word_averages is None:
         logging.error("Word averages file not found. Dictionary won't filter out words based on averages.")
     min_avg = np.mean(list(word_averages.values())) if word_averages else 0.0
 
     cleaned_dict = cmudict.dict()
+
     cleaned_dict = {
         w: prons for w, prons in tqdm(cleaned_dict.items(), desc="Filtering Words from CMU Dictionary", unit=" word")
         if (
             (w in WORD_WHITELIST) or
             (
-                (w not in WORD_BLACKLIST) and
-                (w.isalpha()) and
-                (min_phoneme_length <= len(prons[0]) <= max_phoneme_length) and
-                (min_word_length <= len(w) <= max_word_length) and
-                (min_syllables <= len([p for p in prons[0] if p[-1].isdigit()]) <= max_syllables) and
-                (wordnet.synsets(w)) and
-                (not any(w.startswith(prefix) for prefix in PREFIX_FILTERS)) and
-                (not any(w.startswith(prefix) for prefix in BANNED_PHONEME_PREFIXES.get(w[0].lower(), []))) and
-                (word_averages[w] >= min_avg if word_averages else True)
+                (w not in WORD_BLACKLIST)
+                and (w[0].isalpha())
+                and (wordnet.synsets(w))
+                and (filter_phoneme_length      and (min_phoneme_length <= len(prons[0]) <= max_phoneme_length))
+                and (filter_word_length         and (min_word_length <= len(w) <= max_word_length))
+                and (filter_syllables           and (min_syllables <= len([p for p in prons[0] if p[-1].isdigit()]) <= max_syllables))
+                and (filter_letter_prefixes     and not any(w.startswith(prefix) for prefix in PREFIX_FILTERS))
+                and (filter_phoneme_prefixes    and not any(w.startswith(prefix) for prefix in BANNED_PHONEME_PREFIXES.get(w[0].lower(), [])))
+                and (filter_averages            and (word_averages[w] >= min_avg if word_averages else True))
             )
         )
     }              
@@ -952,9 +968,7 @@ def main():
     nltk.download('wordnet')
 
     PHONEME_DICT = get_cleaned_cmu_dict()
-    logging.info("Phoneme Dictionary Loaded with %d words", len(PHONEME_DICT))
-    PHONEME_DICT_NORMALIZED = {w: normalize_phoneme(pron) for w, pron in PHONEME_DICT.items()}
-    logging.info("Phoneme Dictionary Normalized")
+    PHONEME_DICT_NORMALIZED = {w: normalize_phoneme(PHONEME_DICT[w][0]) for w in PHONEME_DICT.keys()}
 
     logging.info("Total Words: {:,}".format(len(PHONEME_DICT)))
     
@@ -962,6 +976,11 @@ def main():
     PHONEME_AUDIO_DISTANCE_DICT = get_phoneme_audio_difference_dict()
     PHONEME_COORD_MATRIX, PHONEME_MATRIX_INDEX = build_phoneme_distance_matrix(PHONEME_DISTANCE_DICT)
     PHONEME_AUDIO_MATRIX, _ = build_phoneme_distance_matrix(PHONEME_AUDIO_DISTANCE_DICT)
+
+    logging.info("Phoneme Coordinate Distance Matrix: %s", PHONEME_COORD_MATRIX.shape)
+    logging.info("Phoneme Audio Distance Matrix: %s", PHONEME_AUDIO_MATRIX.shape)
+
+    WORD_PHONEME_INDICES = {w: np.array([PHONEME_MATRIX_INDEX.get(ph, -1) for ph in p1]) for w, p1 in PHONEME_DICT_NORMALIZED.items()}
 
     WORDS_BY_LETTER = defaultdict(list)
     for word in tqdm(PHONEME_DICT.keys(), desc="Grouping Words by First Letter", unit="word"):
@@ -1004,7 +1023,13 @@ def main():
         log_console_header("Finding Best Phonetic Alphabet via Randomized Trial...")
 
         TRIALS = 1000000 # load_user_settings()["trials"]
-        best_scores = find_best_set_randomized(PHONEME_DICT, WORDS_BY_LETTER, TRIALS, top_candidates=TRIALS)
+        best_scores = find_best_set_randomized(words_by_letter=WORDS_BY_LETTER, 
+                                                p_norm_dict=PHONEME_DICT_NORMALIZED,
+                                                p_coordinates=PHONEME_COORDINATES,
+                                                p_coord_matrix=PHONEME_COORD_MATRIX,
+                                                p_audio_matrix=PHONEME_AUDIO_MATRIX,
+                                                p_indices=WORD_PHONEME_INDICES,
+                                                trials=TRIALS, top_candidates=100)
         log_console_header(f"Best Scores Found in {TRIALS} Trials")
         logging.info("Average Calculation Time: %.6f seconds", best_scores['avg_calc_time'])
         
@@ -1013,7 +1038,13 @@ def main():
     
     elif choice == "Score Premade Alphabet":
         NATO = [w for w in NATO_PHONETIC_ALPHABET if w in PHONEME_DICT]
-        best_scores = _score_candidate(NATO, PHONEME_DICT)
+        best_scores = _score_candidate(selected_words=NATO,
+                                        p_norm_dict=PHONEME_DICT_NORMALIZED,
+                                        p_coordinates=PHONEME_COORDINATES,
+                                        p_coord_matrix=PHONEME_COORD_MATRIX,
+                                        p_audio_matrix=PHONEME_AUDIO_MATRIX,
+                                        p_indices=WORD_PHONEME_INDICES,
+                                        phoneme_suffix_length=2, weights=None)
         logging.info("--------------------------------")
         logging.info(f"NATO Score ({best_scores['score']:,.2f}):")
         logging.info("--------------------------------")
