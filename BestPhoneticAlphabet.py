@@ -5,7 +5,6 @@ import json
 import string
 import time
 from collections import defaultdict
-from turtle import distance
 
 # Scientific and Data Libraries
 import numpy as np
@@ -505,6 +504,10 @@ def load_user_settings(settings_path="user_settings.json"):
     with open(settings_path, "r") as f:
         settings = json.load(f)
     return settings
+
+# -------------------------------
+# Main Function
+# -------------------------------
 
 def main():
     log_console_header("Loading and Cleaning CMU Dictionary")
