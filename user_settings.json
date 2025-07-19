@@ -18,5 +18,12 @@
     "weight_rhyme": 2.0,
 
     "weight_vowel_diversity": 1.0,
-    "weight_consonant_diversity": 1.0
+    "weight_consonant_diversity": 1.0,
+
+    "filter_phoneme_length": true,
+    "filter_word_length": true,
+    "filter_syllables": true,
+    "filter_letter_prefixes": true,
+    "filter_phoneme_prefixes": true,
+    "filter_averages": true
 }
