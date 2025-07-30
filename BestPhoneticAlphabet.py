@@ -19,17 +19,7 @@ from csv_writers import (write_word_pair_scores, write_word_averages, write_phon
 from csv_readers import (read_letter_pair_scores, read_word_averages, read_phoneme_difference_file)
 from scoring import (build_phoneme_distance_matrix, candidate_gen, normalize_phoneme, _score_candidate)
 
-# 🔧 CONFIGURATION
-logging.basicConfig(
-    level=logging.INFO,  # Change to DEBUG for more detail, WARNING for less
-    format='[%(levelname)s]: %(message)s',
-    handlers=[
-        logging.StreamHandler(),  # Console output
-        # Uncomment below to also log to a file:
-        # logging.FileHandler("phonetic_alphabet.log")
-    ]
-)
-
+# Constants and Settings
 LETTERS = list(string.ascii_uppercase)
 WORD_PAIR_FILENAME_TEMPLATE:str = "word_pairs_{0}_{1}_data.csv"
 PHONEME_COORDINATE_DISTANCE_FILENAME:str = "phoneme_coordinate_distance.csv"
@@ -314,7 +304,7 @@ def find_best_set_randomized(words_by_letter, p_norm_dict,
                                 p_coordinates, p_indices, p_coord_matrix, p_audio_matrix,
                                 trials=1000, preselected_words=None, top_candidates=100):
 
-    log_console_header("Starting Randomized Search for Best Set of Words", trials)
+    logging.info("Starting Randomized Search for Best Set of Words", trials)
     
     # Track top N candidates for each metric
     TOP_N = max(10, top_candidates)
@@ -351,7 +341,7 @@ def find_best_set_randomized(words_by_letter, p_norm_dict,
             top_candidates.pop()
 
     # Write all top candidates to CSV
-    log_console_header("Writing Top Candidates to CSV")
+    logging.info("Writing Top Candidates to CSV")
     headers = ["Score", "Total Levenshtein Distance", "Total Phoneme Distance", 
                "Total Shared Sequences", "Total Shared Suffixes"] + list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
@@ -380,7 +370,7 @@ def find_best_set_randomized(words_by_letter, p_norm_dict,
         "avg_calc_time": np.mean(calculation_times) if calculation_times else 0.0
     }
 
-    log_console_header(f"Top {TOP_N} candidates saved to 'best_random_search.csv'")
+    logging.info(f"Top {TOP_N} candidates saved to 'best_random_search.csv'")
     return best_scores
 
 # -------------------------------
@@ -439,8 +429,8 @@ def get_cleaned_cmu_dict():
         if (
             (w in WORD_WHITELIST) or
             (
-                # TODO: Redo this filtering system because if any of the filters are false, then the word is not added
-                # instead of that filter being ignored, D'OH
+                # TODO: Redo this filtering system because if any of the filters are false, 
+                # then the word is not added instead of that filter being ignored, D'OH
                 (w not in WORD_BLACKLIST)
                 and (w[0].isalpha())
                 and (wordnet.synsets(w))
@@ -453,13 +443,12 @@ def get_cleaned_cmu_dict():
             )
         )
     }              
-    logging.info(f"CMU Dictionary Filtered | Total Words: {len(cleaned_dict)}")
 
     lemmatizer = WordNetLemmatizer()
     lemma_map = defaultdict(list)
     
     # Lemmatize the words, group by lemma (in cleaned dictionary)
-    for w, prons in tqdm(cleaned_dict.items(), desc="Lemmatizing......", unit=" word"):
+    for w, prons in tqdm(cleaned_dict.items(), desc="Lemmatizing...", unit=" word"):
         noun = lemmatizer.lemmatize(w.lower(), pos='n')
         lemma = lemmatizer.lemmatize(noun, pos='v')
         lemma_map[lemma].append((w, prons[0]))
@@ -483,21 +472,6 @@ def get_cleaned_cmu_dict():
 # UTILITY FUNCTIONS
 # -------------------------------
 
-def log_console_header(message, data=None):
-    logging.info("--------------------------------")
-    if data:
-        logging.info("%s: %s", message, data)
-    else:
-        logging.info(message)
-    logging.info("--------------------------------")
-
-def log_scores(list_name, set, p_dict):
-    logging.info("--------------------------------")
-    logging.info("Best %s Set (%.6f):", list_name, set[0])
-    logging.info("--------------------------------")
-    for word in set[1]:
-        logging.info("%-12s  ->  %s", word.capitalize(), ' '.join(p_dict[word][0]))
-
 def load_user_settings(settings_path="user_settings.json"):
     if not os.path.exists(settings_path):
         raise FileNotFoundError(f"Settings file not found: {settings_path}")
@@ -510,23 +484,34 @@ def load_user_settings(settings_path="user_settings.json"):
 # -------------------------------
 
 def main():
-    log_console_header("Loading and Cleaning CMU Dictionary")
-    # Load the CMU Pronouncing Dictionary and create the phoneme distance dictionary
+    
+    logging.basicConfig(
+        level=logging.INFO,  # Change to DEBUG for more detail, WARNING for less
+        format='[%(levelname)s]: %(message)s',
+        handlers=[
+            logging.StreamHandler(),  # Console output
+            # Uncomment below to also log to a file:
+            # logging.FileHandler("phonetic_alphabet.log")
+        ]
+    )
+    logging.info("Starting Best Phonetic Alphabet Utility")
+    
+    logging.info("Downloading CMU Dictionary")
     nltk.download('cmudict')
     nltk.download('wordnet')
 
+    logging.info("Cleaning CMU Dictionary")
     PHONEME_DICT = get_cleaned_cmu_dict()
     PHONEME_DICT_NORMALIZED = {w: normalize_phoneme(PHONEME_DICT[w][0]) for w in PHONEME_DICT.keys()}
-
-    logging.info("Total Words: {:,}".format(len(PHONEME_DICT)))
+    logging.info("- - - Total Words: {:,}".format(len(PHONEME_DICT)))
     
     PHONEME_DISTANCE_DICT = get_phoneme_coord_distance_dict()
     PHONEME_AUDIO_DISTANCE_DICT = get_phoneme_audio_difference_dict()
     PHONEME_COORD_MATRIX, PHONEME_MATRIX_INDEX = build_phoneme_distance_matrix(PHONEME_DISTANCE_DICT)
     PHONEME_AUDIO_MATRIX, _ = build_phoneme_distance_matrix(PHONEME_AUDIO_DISTANCE_DICT)
 
-    logging.info("Phoneme Coordinate Distance Matrix: %s", PHONEME_COORD_MATRIX.shape)
-    logging.info("Phoneme Audio Distance Matrix: %s", PHONEME_AUDIO_MATRIX.shape)
+    logging.info("- - - Phoneme Coordinate Distance Matrix: %s", PHONEME_COORD_MATRIX.shape)
+    logging.info("- - - Phoneme Audio Distance Matrix: %s", PHONEME_AUDIO_MATRIX.shape)
 
     WORD_PHONEME_INDICES = {w: np.array([PHONEME_MATRIX_INDEX.get(ph, -1) for ph in p1]) for w, p1 in PHONEME_DICT_NORMALIZED.items()}
 
@@ -541,7 +526,7 @@ def main():
         '4': "Score Premade Alphabet"
     }
 
-    log_console_header("Best Phonetic Alphabet Utility")
+    logging.info("Best Phonetic Alphabet Utility")
     print("Choose an option:")
     for key, value in choices.items():
         print(f"{key}. {value}")
@@ -555,13 +540,13 @@ def main():
         return
 
     if choice == "Generate Word Pair Scores":
-        log_console_header("Generating Word Pair Scores")
+        logging.info("Generating Word Pair Scores")
         print("\n---------------WARNING-----------------")
         print("\nThis operation will take a long time and will generate a LARGE number of BIG .csv files!!")
         print("\nPress Enter to continue or [Ctrl+C] to cancel.")
         input()
         print("---------------------------------")
-        log_console_header("Generating Word Pair Scores")
+        logging.info("Generating Word Pair Scores")
         write_word_pair_scores(p_dict=PHONEME_DICT, p_dict_norm=PHONEME_DICT_NORMALIZED, p_indices=WORD_PHONEME_INDICES,
                                 p_coordinates=PHONEME_COORDINATES, p_coord_matrix=PHONEME_COORD_MATRIX, p_audio_matrix=PHONEME_AUDIO_MATRIX, 
                                 words_by_letters=WORDS_BY_LETTER, csv_headers=CSV_WORD_PAIR_HEADERS, filename_template=WORD_PAIR_FILENAME_TEMPLATE)
@@ -572,9 +557,9 @@ def main():
                             words_by_letter=WORDS_BY_LETTER, csv_headers=CSV_WORD_AVERAGE_HEADERS)
 
     elif choice == "Find Best (Randomized Trial)":
-        log_console_header("Finding Best Phonetic Alphabet via Randomized Trial...")
+        logging.info("Finding Best Phonetic Alphabet via Randomized Trial...")
 
-        TRIALS = 1000000 # load_user_settings()["trials"]
+        TRIALS = load_user_settings()["trials"]
         best_scores = find_best_set_randomized(words_by_letter=WORDS_BY_LETTER, 
                                                 p_norm_dict=PHONEME_DICT_NORMALIZED,
                                                 p_coordinates=PHONEME_COORDINATES,
@@ -582,11 +567,14 @@ def main():
                                                 p_audio_matrix=PHONEME_AUDIO_MATRIX,
                                                 p_indices=WORD_PHONEME_INDICES,
                                                 trials=TRIALS, top_candidates=100)
-        log_console_header(f"Best Scores Found in {TRIALS} Trials")
+        logging.info(f"Best Scores Found in {TRIALS} Trials")
         logging.info("Average Calculation Time: %.6f seconds", best_scores['avg_calc_time'])
         
-        # Log best sets
-        log_scores("Overall", best_scores['score'], PHONEME_DICT)
+        logging.info("--------------------------------")
+        logging.info("Best Overall Set (%.6f):", best_scores['score'])
+        logging.info("--------------------------------")
+        for word in best_scores['set'][1]:
+            logging.info("%-12s  ->  %s", word.capitalize(), ' '.join(PHONEME_DICT[word][0]))
     
     elif choice == "Score Premade Alphabet":
         NATO = [w for w in NATO_PHONETIC_ALPHABET if w in PHONEME_DICT]
