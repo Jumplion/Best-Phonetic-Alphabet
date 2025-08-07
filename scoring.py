@@ -51,6 +51,23 @@ def candidate_gen(trials, words_by_letter, preselected_by_letter=None):
         if len(candidate) == len(LETTERS):
             yield candidate
 
+def analyze_alphabet(data):
+    selected_words = data.get("selected_words", [])
+    p_norm_dict = data.get("phoneme_norm_dict", {})
+    p_coordinates = data.get("phoneme_coordinates", {})
+    p_indices = data.get("phoneme_indices", {})
+    p_coord_matrix = data.get("phoneme_coord_matrix", {})
+    p_audio_matrix = data.get("phoneme_audio_matrix", {})
+    phoneme_suffix_length = data.get("phoneme_suffix_length", 2)
+    weights = data.get("weights", None)
+
+    return 1.0
+
+    # Score the candidate alphabet
+    return _score_candidate(selected_words, p_norm_dict, p_coordinates, 
+                            p_indices, p_coord_matrix, p_audio_matrix,
+                            phoneme_suffix_length, weights)
+
 def _score_candidate(selected_words, p_norm_dict, p_coordinates, 
                      p_indices, p_coord_matrix, p_audio_matrix,
                      phoneme_suffix_length=2, weights=None):
@@ -158,16 +175,16 @@ def _score_candidate(selected_words, p_norm_dict, p_coordinates,
     WEIGHT_SHARED_SEQ =             weights["weight_shared_seq"] if weights is not None            else 2.0
     WEIGHT_SHARED_SUFFIX =          weights["weight_shared_suffix"] if weights is not None         else 2.0
     WEIGHT_RHYME =                  weights["weight_rhyme"] if weights is not None                 else 2.0
-    WEIGHT_VOWEL_DIVERSITY =        weights["weight_vowel_diversity"] if weights is not None       else 1.0
-    WEIGHT_CONSONANT_DIVERSITY =    weights["weight_consonant_diversity"] if weights is not None   else 1.0
+    #WEIGHT_VOWEL_DIVERSITY =        weights["weight_vowel_diversity"] if weights is not None       else 1.0
+    #WEIGHT_CONSONANT_DIVERSITY =    weights["weight_consonant_diversity"] if weights is not None   else 1.0
     WEIGHT_AUDIO_DIVERSITY =        weights["weight_audio_diversity"] if weights is not None       else 1.0
 
     score = (
         (WEIGHT_LEVENSHTEIN     * total_levenshtein)
         + (WEIGHT_PHONEME       * total_phoneme_coord_dist)
         + (WEIGHT_AUDIO_DIVERSITY * total_phoneme_audio_dist)
-        + (WEIGHT_VOWEL_DIVERSITY       * (len(vowel_set) / len(vowels)))
-        + (WEIGHT_CONSONANT_DIVERSITY   * (len(consonant_set) / len(consonants)))
+        # + (WEIGHT_VOWEL_DIVERSITY       * (len(vowel_set) / len(vowels)))
+        # + (WEIGHT_CONSONANT_DIVERSITY   * (len(consonant_set) / len(consonants)))
         - (WEIGHT_SHARED_SEQ    * shared_sequence_penalty)
         - (WEIGHT_SHARED_SUFFIX * shared_suffix_penalty)
         - (WEIGHT_RHYME         * rhyme_penalty)
