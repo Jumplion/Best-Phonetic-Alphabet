@@ -8,6 +8,7 @@ from collections import defaultdict
 
 # Scientific and Data Libraries
 import numpy as np
+import pandas as pd
 from tqdm import tqdm
 
 # NLP Libraries
@@ -15,9 +16,12 @@ import nltk
 from nltk.corpus import cmudict, wordnet
 from nltk.stem import WordNetLemmatizer
 
-from csv_writers import (write_word_pair_scores, write_word_averages, write_phoneme_coord_distance_dict)
-from csv_readers import (read_letter_pair_scores, read_word_averages, read_phoneme_difference_file)
-from scoring import (build_phoneme_distance_matrix, candidate_gen, normalize_phoneme, _score_candidate)
+import sqlite3
+from datetime import datetime
+
+from csv_writers import (write_word_pair_scores, write_word_averages)
+from csv_readers import (read_word_averages)
+from scoring import (candidate_gen, normalize_phoneme, _score_candidate)
 
 # Constants and Settings
 LETTERS = list(string.ascii_uppercase)
@@ -28,13 +32,6 @@ LETTER_PAIR_FILENAME:str = "letter_pair_averages.csv"
 
 # Phoneme Coordinates
 PHONEME_DICT = defaultdict(list)
-PHONEME_DICT_NORMALIZED = defaultdict(list)
-PHONEME_DISTANCE_DICT = defaultdict()
-PHONEME_AUDIO_DISTANCE_DICT = defaultdict()
-PHONEME_COORD_MATRIX = None
-PHONEME_AUDIO_MATRIX = None
-PHONEME_MATRIX_INDEX = {}
-
 WORDS_BY_LETTER = defaultdict(list)
 
 # CSV Headers
@@ -65,6 +62,7 @@ CSV_WORD_AVERAGE_HEADERS:list[str] =  [
 ]
 
 # Word and Phoneme Blacklists and Whitelists
+# TODO: Convert to JSON User Settings
 WORD_BLACKLIST = [
 ]
 WORD_WHITELIST = [
@@ -180,6 +178,7 @@ NATO_PHONETIC_ALPHABET = [
     "uniform", "victor", "whiskey", "x-ray", "yankee", "zulu"
 ]
 
+# TODO: Convert to configurable user settings in the JSON
 """ Letter Prefixes that should not be at the start of words
 These prefixes are often silent or not pronounced, so we filter them out
 """
@@ -196,6 +195,7 @@ BANNED_LETTER_PREFIXES = [
     "wr"
 ]
 
+# TODO: Convert to configurable user settings in the JSON
 """ Phoneme Prefixes that are banned from certain letter groups.
 For example, "E" words shouldn't start with "y" like "eunuch" or "euphoria"
 """
@@ -228,84 +228,17 @@ BANNED_PHONEME_PREFIXES = {
     "z" : []
 }
 
-# Phoneme Coordinates
-PHONEME_COORDINATES = {   
-    # VOWELS    
-    # Vowel |  Backness | Height | Roundness
-    #   0 = Front,  0.5 = Central, 1 = Back
-    #   0 = Low [Open], 0.5 = Mid, 1 = High [Close]
-    #   0 = Rounded, 1 = Unrounded
-    "AA":  (0,  1,      0,       0),    # ɑ             father
-    "AE":  (0,  0,      0,       0),    # æ             cat
-    "AH":  (0,  0.5,    0.5,     0),    # ʌ or ə        cut
-    "AO":  (0,  1,      0.5,     1),    # ɔ`            caught
-    "AW":  (0,  0.75,   0.5,     1),    # aʊ            cow
-    "AX":  (0,  0.5,    0.5,     0),    # ə (schwa)     about
-    "AY":  (0,  0.5,    0.5,     0),    # aɪ            my
-    "EY":  (0,  0,      0.65,    0),    # e             they
-    "EH":  (0,  0,      0.5,     0),    # ɛ             bed
-    "ER":  (0,  0.5,    0.5,     0),    # ɚ or ɝ        her
-    "IY":  (0,  0,      1,       0),    # i             see
-    "IH":  (0,  0,      0.85,    0),    # ɪ             sit
-    "OW":  (0,  1,      0.65,    1),    # o             go
-    "OY":  (0,  0.5,    0.5,     0.5),  # ɔɪ            toy
-    "UW":  (0,  1,      1,       1),    # u             too
-    "UH":  (0,  1,      0.85,    1),    # ʊ             put
-    
-    # CONSONANTS
-    # Consonant | Place of Articulation | Manner of Articulation | Voiced/Unvoiced
-    # 0 = Bilabial, 0.2 = Labiodental, 0.4 = Dental, 0.6 = Alveolar, 0.8 = Velar, 1 = Glottal
-    # 0 = Stop, 0.125 = Affricate, 0.25 = Fricative, 0.5 = Nasal, 0.75 = Lateral Liquid, 0.875 = Rhotic Liquid, 1 = Glide
-    # 0 = Voiceless, 1 = Voiced
-    
-    # Stops
-    "P":  (1, 0,    0,      0),  # voiceless bilabial stop              pat
-    "B":  (1, 0,    0,      1),  # voiced bilabial stop                 bat
-    "D":  (1, 0.4,  0,      1),  # voiced alveolar stop                 dog
-    "T":  (1, 0.4,  0,      0),  # voiceless alveolar stop              top
-    "K":  (1, 0.8,  0,      0),  # voiceless velar stop                 cat
-    "G":  (1, 0.8,  0,      1),  # voiced velar stop                    go
-    
-    # Affricates
-    "CH": (1, 0.6,  0.125,  0),  # voiceless postalveolar affricate     chip
-    "JH": (1, 0.6,  0.125,  1),  # voiced postalveolar affricate        judge
-
-    # Fricatives
-    "F":  (1, 0.2,  0.25,   0),  # voiceless labiodental fricative      fish
-    "V":  (1, 0.2,  0.25,   1),  # voiced labiodental fricative         van
-    "TH": (1, 0.4,  0.25,   0),  # voiceless dental fricative           thin
-    "DH": (1, 0.4,  0.25,   1),  # voiced dental fricative              then
-    "S":  (1, 0.4,  0.25,   0),  # voiceless alveolar fricative         see
-    "Z":  (1, 0.4,  0.25,   1),  # voiced alveolar fricative            zoo
-    "SH": (1, 0.6,  0.25,   0),  # voiceless postalveolar fricative     she
-    "ZH": (1, 0.6,  0.25,   1),  # voiced postalveolar fricative        measure
-    "HH": (1, 1,    0.25,   0),  # voiceless glottal fricative          he
-
-    # Nasals
-    "M":  (1, 0,    0.5,    1),  # bilabial nasal                       me
-    "N":  (1, 0.4,  0.5,    1),  # alveolar nasal                       no
-    "NG": (1, 0.8,  0.5,    1),  # velar nasal                          sing
-
-    # Liquids
-    "L":  (1, 0.4,  0.75,   1),  # alveolar lateral liquid              leaf    
-    "R":  (1, 0.4,  0.875,  1),  # alveolar rhotic liquid               red
-
-    # Glides (approximants)
-    "Y":  (1, 0.6,  1,      1),  # palatal glide    (IPA: /j/)          yes
-    "W":  (1, 0,    1,      1)   # bilabial glide   (IPA: /w/)          we
-}   
-
 # --------------
 # Main Search Function
 # --------------
 
 """ Find the best set of words via random sampling. """
-def find_best_set_randomized(words_by_letter, p_norm_dict, 
-                                p_coordinates, p_indices, p_coord_matrix, p_audio_matrix,
-                                trials=1000, preselected_words=None, top_candidates=100):
+def find_best_set_randomized(words_by_letter, trials=1000, preselected_words=None, top_candidates=100, save_each_candidate=False):
 
-    logging.info("Starting Randomized Search for Best Set of Words", trials)
+    logging.info("Starting Randomized Search for Best Set of Words...")
     
+    trial_name = f"random_search_{trials}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
     # Track top N candidates for each metric
     TOP_N = max(10, top_candidates)
     top_candidates = []
@@ -320,10 +253,7 @@ def find_best_set_randomized(words_by_letter, p_norm_dict,
     calculation_times = []
     for c in tqdm(candidate_gen(trials, words_by_letter, preselected_by_letter), total=trials, desc="Generating and Scoring Candidates", unit=" candidate", colour="green"):
         start_time = time.time()
-        results = _score_candidate(selected_words=c, p_norm_dict=p_norm_dict, 
-                                      p_coordinates=p_coordinates, p_indices=p_indices,
-                                      p_coord_matrix=p_coord_matrix, p_audio_matrix=p_audio_matrix,
-                                      phoneme_suffix_length=2, weights=None)
+        results = _score_candidate(selected_words=c, phoneme_suffix_length=2, weights=None)
         calculation_times.append(time.time() - start_time)
         
         candidate_entry = {
@@ -336,9 +266,13 @@ def find_best_set_randomized(words_by_letter, p_norm_dict,
         }
         
         top_candidates.append(candidate_entry)
-        top_candidates.sort(key=lambda x: x["score"], reverse=True)
+        
         if len(top_candidates) > TOP_N:
+            top_candidates.sort(key=lambda x: x["score"], reverse=True)
             top_candidates.pop()
+
+        if save_each_candidate:
+            save_candidates_to_db([candidate_entry], trial_name=trial_name)
 
     # Write all top candidates to CSV
     logging.info("Writing Top Candidates to CSV")
@@ -360,6 +294,14 @@ def find_best_set_randomized(words_by_letter, p_norm_dict,
                 ] + entry["candidate"]
             writer.writerow(row)
 
+
+
+    logging.info(f"Top {TOP_N} candidates saved to 'best_random_search.csv'")
+
+    # Save to database before returning
+
+    save_candidates_to_db(top_candidates, trial_name=trial_name)
+
     # Return best scores in original format for compatibility
     best_scores = {
         "levenshtein": (top_candidates[0]["total_levenshtein"], top_candidates[0]["candidate"]) if top_candidates else (float('-inf'), []),
@@ -370,26 +312,82 @@ def find_best_set_randomized(words_by_letter, p_norm_dict,
         "avg_calc_time": np.mean(calculation_times) if calculation_times else 0.0
     }
 
-    logging.info(f"Top {TOP_N} candidates saved to 'best_random_search.csv'")
     return best_scores
+
+def save_candidates_to_db(top_candidates, trial_name="random_search", db_path="phoneme_data.db"):
+    """Save alphabet candidates to the database."""
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
+    
+    batch_data = []
+    
+    for candidate in top_candidates:
+        # Pad candidate list to 26 words if needed
+        candidate_words = []
+        for l in LETTERS:
+            for w in candidate:
+                if w.startswith(l):
+                    candidate_words.append(w)
+                    break
+            else:
+                candidate_words.append("")  # Fill with empty string if no word found
+
+        batch_data.append((
+            trial_name,
+            candidate["score"],
+            candidate["total_levenshtein"],
+            candidate["total_phoneme_distance"],
+            candidate["shared_sequence"],
+            candidate["shared_suffix"],
+            *candidate_words  # Unpack the 26 words
+        ))
+
+    cur.executemany("""
+        INSERT INTO alphabet_candidates (
+            trial_name, total_score,
+            total_levenshtein, total_phoneme_distance, shared_sequences, shared_suffixes,
+            word_a, word_b, word_c, word_d, word_e, word_f, word_g, word_h, word_i, word_j,
+            word_k, word_l, word_m, word_n, word_o, word_p, word_q, word_r, word_s, word_t,
+            word_u, word_v, word_w, word_x, word_y, word_z
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, batch_data)
+    
+    conn.commit()
+    conn.close()
+    print(f"✅ Saved {len(batch_data)} candidates to database")
+
+def get_candidates_from_db(metric_type=None, limit=10, db_path="phoneme_data.db"):
+    """Retrieve candidates from the database."""
+    conn = sqlite3.connect(db_path)
+    
+    query = """
+        SELECT * FROM alphabet_candidates 
+        WHERE (? IS NULL OR metric_type = ?)
+        ORDER BY
+            rank_position
+        LIMIT ?
+    """
+    
+    df = pd.read_sql_query(query, conn, params=[metric_type, metric_type, limit])
+    conn.close()
+    
+    return df
+
+def get_alphabet_from_candidate(candidate_row):
+    """Extract the 26-word alphabet from a candidate row."""
+    letters = 'abcdefghijklmnopqrstuvwxyz'
+    alphabet = {}
+    
+    for letter in letters:
+        word = candidate_row[f'word_{letter}']
+        if word:
+            alphabet[letter.upper()] = word
+    
+    return alphabet
 
 # -------------------------------
 # Dictionary Functions
 # -------------------------------
-
-def get_phoneme_coord_distance_dict():
-    distances = read_phoneme_difference_file(PHONEME_COORDINATE_DISTANCE_FILENAME)
-    if distances is None:
-        logging.info("Phoneme Coordinate Distance Dictionary does not exist. Creating it now.")
-        distances = write_phoneme_coord_distance_dict()
-    return distances
-
-def get_phoneme_audio_difference_dict():
-    distances = read_phoneme_difference_file(PHONEME_AUDIO_DISTANCE_FILENAME)
-    if distances is None:
-        logging.info("Phoneme Audio Distance Dictionary does not exist. Run the 'connear_notebook.ipynb' to create it!")
-        distances = {}
-    return distances
 
 """ Clean the CMU Pronouncing Dictionary and apply filters.
 - Filters out words with non-alphabetic characters, too short/long words, blacklisted words, etc.
@@ -397,6 +395,7 @@ def get_phoneme_audio_difference_dict():
 - Adds custom words with predefined phonemes.
 """
 def get_cleaned_cmu_dict():
+    logging.info("Cleaning CMU Dictionary...")
 
     # Get user settings
     settings = load_user_settings()
@@ -500,20 +499,9 @@ def main():
     nltk.download('cmudict')
     nltk.download('wordnet')
 
-    logging.info("Cleaning CMU Dictionary")
+    # TODO: Rewrite so that it utilizes the phoneme_data.db stuff
     PHONEME_DICT = get_cleaned_cmu_dict()
     PHONEME_DICT_NORMALIZED = {w: normalize_phoneme(PHONEME_DICT[w][0]) for w in PHONEME_DICT.keys()}
-    logging.info("- - - Total Words: {:,}".format(len(PHONEME_DICT)))
-    
-    PHONEME_DISTANCE_DICT = get_phoneme_coord_distance_dict()
-    PHONEME_AUDIO_DISTANCE_DICT = get_phoneme_audio_difference_dict()
-    PHONEME_COORD_MATRIX, PHONEME_MATRIX_INDEX = build_phoneme_distance_matrix(PHONEME_DISTANCE_DICT)
-    PHONEME_AUDIO_MATRIX, _ = build_phoneme_distance_matrix(PHONEME_AUDIO_DISTANCE_DICT)
-
-    logging.info("- - - Phoneme Coordinate Distance Matrix: %s", PHONEME_COORD_MATRIX.shape)
-    logging.info("- - - Phoneme Audio Distance Matrix: %s", PHONEME_AUDIO_MATRIX.shape)
-
-    WORD_PHONEME_INDICES = {w: np.array([PHONEME_MATRIX_INDEX.get(ph, -1) for ph in p1]) for w, p1 in PHONEME_DICT_NORMALIZED.items()}
 
     WORDS_BY_LETTER = defaultdict(list)
     for word in tqdm(PHONEME_DICT.keys(), desc="Grouping Words by First Letter", unit="word"):
@@ -547,49 +535,33 @@ def main():
         input()
         print("---------------------------------")
         logging.info("Generating Word Pair Scores")
-        write_word_pair_scores(p_dict=PHONEME_DICT, p_dict_norm=PHONEME_DICT_NORMALIZED, p_indices=WORD_PHONEME_INDICES,
-                                p_coordinates=PHONEME_COORDINATES, p_coord_matrix=PHONEME_COORD_MATRIX, p_audio_matrix=PHONEME_AUDIO_MATRIX, 
-                                words_by_letters=WORDS_BY_LETTER, csv_headers=CSV_WORD_PAIR_HEADERS, filename_template=WORD_PAIR_FILENAME_TEMPLATE)
+        write_word_pair_scores(p_dict=PHONEME_DICT, p_dict_norm=PHONEME_DICT_NORMALIZED, words_by_letters=WORDS_BY_LETTER, csv_headers=CSV_WORD_PAIR_HEADERS, filename_template=WORD_PAIR_FILENAME_TEMPLATE)
 
     elif choice == "Generate Word Averages":
-        write_word_averages(p_dict=PHONEME_DICT, p_dict_norm=PHONEME_DICT_NORMALIZED, p_coordinates=PHONEME_COORDINATES,
-                            p_indices=WORD_PHONEME_INDICES, p_coord_matrix=PHONEME_COORD_MATRIX, p_audio_matrix=PHONEME_AUDIO_MATRIX,
-                            words_by_letter=WORDS_BY_LETTER, csv_headers=CSV_WORD_AVERAGE_HEADERS)
+        write_word_averages(p_dict=PHONEME_DICT, p_dict_norm=PHONEME_DICT_NORMALIZED, words_by_letter=WORDS_BY_LETTER, csv_headers=CSV_WORD_AVERAGE_HEADERS)
 
     elif choice == "Find Best (Randomized Trial)":
         logging.info("Finding Best Phonetic Alphabet via Randomized Trial...")
 
-        TRIALS = load_user_settings()["trials"]
-        best_scores = find_best_set_randomized(words_by_letter=WORDS_BY_LETTER, 
-                                                p_norm_dict=PHONEME_DICT_NORMALIZED,
-                                                p_coordinates=PHONEME_COORDINATES,
-                                                p_coord_matrix=PHONEME_COORD_MATRIX,
-                                                p_audio_matrix=PHONEME_AUDIO_MATRIX,
-                                                p_indices=WORD_PHONEME_INDICES,
-                                                trials=TRIALS, top_candidates=100)
+        TRIALS = 10000 #load_user_settings()["trials"]
+        best_scores = find_best_set_randomized(words_by_letter=WORDS_BY_LETTER, trials=TRIALS, top_candidates=100)
         logging.info(f"Best Scores Found in {TRIALS} Trials")
-        logging.info("Average Calculation Time: %.6f seconds", best_scores['avg_calc_time'])
-        
+        logging.info(f"Average Calculation Time: {best_scores['avg_calc_time']:.6f} seconds")
+
         logging.info("--------------------------------")
-        logging.info("Best Overall Set (%.6f):", best_scores['score'])
+        logging.info(f"Best Overall Set ({best_scores['score']:,.6f}):")
         logging.info("--------------------------------")
-        for word in best_scores['set'][1]:
-            logging.info("%-12s  ->  %s", word.capitalize(), ' '.join(PHONEME_DICT[word][0]))
-    
+        for word in best_scores['score'][1]:
+            logging.info(f"{word.capitalize():-12s}  ->  {' '.join(PHONEME_DICT[word][0])}")
+
     elif choice == "Score Premade Alphabet":
         NATO = [w for w in NATO_PHONETIC_ALPHABET if w in PHONEME_DICT]
-        best_scores = _score_candidate(selected_words=NATO,
-                                        p_norm_dict=PHONEME_DICT_NORMALIZED,
-                                        p_coordinates=PHONEME_COORDINATES,
-                                        p_coord_matrix=PHONEME_COORD_MATRIX,
-                                        p_audio_matrix=PHONEME_AUDIO_MATRIX,
-                                        p_indices=WORD_PHONEME_INDICES,
-                                        phoneme_suffix_length=2, weights=None)
+        best_scores = _score_candidate(selected_words=NATO, phoneme_suffix_length=2, weights=None)
         logging.info("--------------------------------")
         logging.info(f"NATO Score ({best_scores['score']:,.2f}):")
         logging.info("--------------------------------")
         for word in NATO:
-            logging.info("%-8s  ->  %s", word.capitalize(), ' '.join(PHONEME_DICT[word][0]))
+            logging.info(f"{word.capitalize():-12s}  ->  {' '.join(PHONEME_DICT[word][0])}")
 
     else:
         print("Exiting Program.")

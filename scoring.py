@@ -1,23 +1,10 @@
+import sqlite3
 import string
 import random
 import numpy as np
 import editdistance
 
-def build_phoneme_distance_matrix(p_distance_dict):
-    # 1. Find all unique phonemes
-    all_phonemes = sorted(set(ph for pair in p_distance_dict for ph in pair))
-    ph_to_idx = {ph: i for i, ph in enumerate(all_phonemes)}
-    size = len(all_phonemes)
-
-    # 2. Fill square distance matrix
-    ph_dist_matrix = np.ones((size, size), dtype=np.float32)
-    for (ph1, ph2), dist in p_distance_dict.items():
-        i = ph_to_idx[ph1]
-        j = ph_to_idx[ph2]
-        ph_dist_matrix[i, j] = dist
-        ph_dist_matrix[j, i] = dist  # symmetric
-
-    return ph_dist_matrix, ph_to_idx
+from phoneme_utils import PHONEME_COORDINATES, PHONEME_DISTANCES 
 
 """ Extract the rhyme portion of a phoneme list.
 NOTE: Requires the phoneme list to have stress markers (e.g., '1' for primary stress).
@@ -53,31 +40,45 @@ def candidate_gen(trials, words_by_letter, preselected_by_letter=None):
 
 def analyze_alphabet(data):
     selected_words = data.get("selected_words", [])
-    p_norm_dict = data.get("phoneme_norm_dict", {})
-    p_coordinates = data.get("phoneme_coordinates", {})
-    p_indices = data.get("phoneme_indices", {})
-    p_coord_matrix = data.get("phoneme_coord_matrix", {})
-    p_audio_matrix = data.get("phoneme_audio_matrix", {})
     phoneme_suffix_length = data.get("phoneme_suffix_length", 2)
     weights = data.get("weights", None)
-
-    return 1.0
-
+    
     # Score the candidate alphabet
-    return _score_candidate(selected_words, p_norm_dict, p_coordinates, 
-                            p_indices, p_coord_matrix, p_audio_matrix,
-                            phoneme_suffix_length, weights)
+    return _score_candidate(selected_words, phoneme_suffix_length, weights)
 
-def _score_candidate(selected_words, p_norm_dict, p_coordinates, 
-                     p_indices, p_coord_matrix, p_audio_matrix,
-                     phoneme_suffix_length=2, weights=None):
+def _score_candidate(selected_words, phoneme_suffix_length=2, weights=None):
+
+    # Connect to database
+    db_path = "phoneme_data.db"
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
+
+    # Get word data from database "cmudict"
+    word_data = {}
+    for word in selected_words:
+        cur.execute("""
+            SELECT word, pronunciation, norm_pron, syllables, lemma, avg_score
+            FROM cmudict 
+            WHERE word = ?
+        """, (word.lower(),))
+        
+        result = cur.fetchone()
+        word_data[word] = {
+            'pronunciation': result[1].split() if result[1] else [],
+            'norm_pron': result[2].split() if result[2] else [],
+            'syllables': result[3] if result[3] is not None else 0,
+            'lemma': result[4] if result[4] is not None else word,
+            'avg_score': result[5] if result[5] is not None else 0.0
+        }
+    
+    conn.close()
 
     total_levenshtein, total_phoneme_coord_dist, total_phoneme_audio_dist = 0, 0, 0
     shared_sequence_penalty, shared_suffix_penalty = 0, 0
     rhyme_penalty = 0
 
-    vowels = [v for v in p_coordinates if p_coordinates[v][0] == 0]
-    consonants = [c for c in p_coordinates if p_coordinates[c][0] == 1]
+    vowels = [v for v in PHONEME_COORDINATES if PHONEME_COORDINATES[v][0] == 0]
+    consonants = [c for c in PHONEME_COORDINATES if PHONEME_COORDINATES[c][0] == 1]
 
     vowel_set, consonant_set = set(), set()
     suffix_counts, suffix_to_words = {}, {}
@@ -88,7 +89,7 @@ def _score_candidate(selected_words, p_norm_dict, p_coordinates,
     # Pairwise comparisons
     for i in range(len(selected_words)):
         w1 = selected_words[i]
-        p1 = p_norm_dict[w1]
+        p1 = word_data[w1]['norm_pron']
 
         # Collect vowels and consonants
         for p in p1:
@@ -113,39 +114,18 @@ def _score_candidate(selected_words, p_norm_dict, p_coordinates,
         # Compare to all subsequent words
         for j in range(i + 1, len(selected_words)):
             w2 = selected_words[j]
-            p2 = p_norm_dict[w2]
+            p2 = word_data[w2]['norm_pron']
 
             total_levenshtein += editdistance.eval(w1, w2)
-            
-            # --- Vectorized phoneme COORD distance ---
-            idx1 = p_indices[w1]
-            idx2 = p_indices[w2]
 
-            min_len = min(len(idx1), len(idx2))
+            for x in range(min(len(p1), len(p2))):
+                total_phoneme_coord_dist += np.sum(PHONEME_COORDINATES.get((p1[x], p2[x]), {'coord': 0.0})['coord'])
+                total_phoneme_audio_dist += np.sum(PHONEME_DISTANCES.get((p1[x], p2[x]), {'audio': 0.0})['audio'])
 
-            # For some reason this is needed? When is the min_length 0?
-            if min_len > 0:
-                idx1 = idx1[:min_len]
-                idx2 = idx2[:min_len]
-
-                pairwise_coord = p_coord_matrix[idx1, idx2]
-                pairwise_coord = np.where((idx1 == -1) | (idx2 == -1), 1.0, pairwise_coord)
-
-                pairwise_audio = p_audio_matrix[idx1, idx2]
-                pairwise_audio = np.where((idx1 == -1) | (idx2 == -1), 1.0, pairwise_audio)
-
-                total_phoneme_coord_dist += np.sum(pairwise_coord)
-                total_phoneme_audio_dist += np.sum(pairwise_audio)
-
-
-            # Rhyme penalty (using CMU dictionary with stress)
-            #   NOTE: Requires UN-NORMALIZED Phonemes (i.e., with stress markers)
-            #   TODO: Probably doesn't actually work as intended tbh....
-            #rhyme1 = extract_rhyme_portion(p_dict[w1][0])
-            #rhyme2 = extract_rhyme_portion(p_dict[w2][0])
-            #if rhyme1 and (rhyme1 == rhyme2):
-            #    rhyme_penalty += 1
-            #    rhyme_pairs.append((w1, w2, rhyme1))
+            # Add excess phoneme values if needed (Arbitrary penalty for excess)
+            excess = abs(len(p1) - len(p2))
+            total_phoneme_audio_dist += excess * 0.5
+            total_phoneme_coord_dist += excess * 0.5
 
             # Shared phoneme sub-sequences (n-grams)
             ngram_max = min(len(p1), len(p2))

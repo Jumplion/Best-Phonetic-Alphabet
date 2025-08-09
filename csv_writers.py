@@ -8,6 +8,7 @@ from tqdm import tqdm
 from collections import defaultdict
 
 from scoring import _score_candidate
+from phoneme_utils import PHONEME_COORDINATES, PHONEME_DISTANCES
 
 logging.basicConfig(level=logging.INFO)
 
@@ -16,7 +17,7 @@ Segments each Letter-Pair into their own files (e.g., A-B, A-C, etc...)
 NOTE: Does not create redundant letter pairs
 - E.G., A-B and B-A are not created separately since they would be identical (just reversed).
 """
-def write_word_pair_scores(p_dict, p_dict_norm, p_indices, p_coordinates, p_coord_matrix, p_audio_matrix, words_by_letters, csv_headers, filename_template):
+def write_word_pair_scores(p_dict, p_dict_norm, words_by_letters, csv_headers, filename_template):
 
     csv_base_dir = os.path.join("CSV Files")
     os.makedirs(csv_base_dir, exist_ok=True)
@@ -53,13 +54,7 @@ def write_word_pair_scores(p_dict, p_dict_norm, p_indices, p_coordinates, p_coor
 
                 # Calculate distances for each word pair
                 for w1, w2 in tqdm(pairs, total=len(pairs), desc=f"Calculating and Writing to CSV: {l1}_{l2}", unit=" word pair", leave=False, colour="yellow"):
-                    data = _score_candidate(selected_words=[w1, w2], p_norm_dict=p_dict_norm,
-                                            p_coordinates=p_coordinates,
-                                            p_indices=p_indices,
-                                            p_coord_matrix=p_coord_matrix,  # Not used in this context
-                                            p_audio_matrix=p_audio_matrix,  # Not used in this context
-                                            phoneme_suffix_length=2,
-                                            weights=None)                  
+                    data = _score_candidate(selected_words=[w1, w2], p_norm_dict=p_dict_norm, phoneme_suffix_length=2, weights=None)
                     p1, p2 = p_dict[w1][0], p_dict[w2][0]
                     # Write the data to the main CSV file   
                     writer.writerow([w1, w2, data["score"],
@@ -71,7 +66,7 @@ def write_word_pair_scores(p_dict, p_dict_norm, p_indices, p_coordinates, p_coor
                                     data["phoneme_audio_distance"]])   
 
 
-def write_word_averages(p_dict, p_dict_norm, p_coordinates, p_indices, p_coord_matrix, p_audio_matrix, words_by_letter, csv_headers):
+def write_word_averages(p_dict, p_dict_norm, words_by_letter, csv_headers):
 
     logging.info("Calculating Word Averages...")
     csv_filename = os.path.join("CSV Files", "word_averages.csv")
@@ -101,8 +96,8 @@ def write_word_averages(p_dict, p_dict_norm, p_coordinates, p_indices, p_coord_m
             phonemes = p_dict_norm[word][0]
             phoneme_magnitude = 0.0
             for p in phonemes:
-                if p in p_coordinates:
-                    coords = p_coordinates[p]
+                if p in PHONEME_COORDINATES:
+                    coords = PHONEME_COORDINATES[p]
                     magnitude = np.sqrt(sum(coord**2 for coord in coords))
                     phoneme_magnitude += magnitude
 
@@ -111,13 +106,7 @@ def write_word_averages(p_dict, p_dict_norm, p_coordinates, p_indices, p_coord_m
                 if letter2 == letter1:
                     continue
                 for other_word in tqdm(words_by_letter[letter2], desc=f"Scoring {word}", unit="comparison", leave=False, colour="blue"):
-                    result = _score_candidate([word, other_word], p_norm_dict=p_dict_norm,
-                                            p_coordinates=p_coordinates,
-                                            p_indices=p_indices,
-                                            p_coord_matrix=p_coord_matrix,  # Not used in this context
-                                            p_audio_matrix=p_audio_matrix,  # Not used in this context
-                                            phoneme_suffix_length=2,
-                                            weights=None)
+                    result = _score_candidate([word, other_word], p_norm_dict=p_dict_norm, phoneme_suffix_length=2, weights=None)
                     scores["score"].append(result["score"])
                     scores["total_levenshtein"].append(result["total_levenshtein"])
                     scores["total_phoneme_distance"].append(result["total_phoneme_distance"])
