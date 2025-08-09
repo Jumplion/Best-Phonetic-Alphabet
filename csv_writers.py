@@ -10,19 +10,49 @@ from collections import defaultdict
 from scoring import _score_candidate
 from phoneme_utils import PHONEME_COORDINATES, PHONEME_DISTANCES
 
+# CSV Headers
+CSV_WORD_PAIR_HEADERS:list[str] = [
+    "Source", "Target", "Score",
+    "Source-Phonemes", "Target-Phonemes",
+    "Levenshtein Distance", "Phoneme Distance", 
+    "Shared Sequence Count", "Sequences",
+    "Suffix Count", "Suffixes",
+    "Rhyme Count", "Rhymes",
+    "Phoneme Audio Distance"
+]
+
+CSV_DISTANCE_AVERAGE_HEADERS:list[str] = [
+    "Source", "Target", "Total Word Pairs",
+    "Min Lev", "Max Lev", "Avg Lev", "Std Dev Lev",
+    "Min Phoneme", "Max Phoneme", "Avg Phoneme", "Std Dev Phoneme",
+    "Min Shared", "Max Shared", "Avg Shared", "Std Dev Shared",
+    "Min Score", "Max Score", "Avg Score", "Std Dev Score"
+]
+
+CSV_WORD_AVERAGE_HEADERS:list[str] =  [
+    "Word", "Letter", "Phonemes", "Phoneme_Count", "Phoneme_Magnitude", "Comparisons_Made",
+    "Avg_Score", "Min_Score", "Max_Score", "Std_Score",
+    "Avg_Levenshtein", "Min_Levenshtein", "Max_Levenshtein", "Std_Levenshtein",
+    "Avg_Phoneme_Distance", "Min_Phoneme_Distance", "Max_Phoneme_Distance", "Std_Phoneme_Distance",
+    "Avg_Shared_Sequences", "Min_Shared_Sequences", "Max_Shared_Sequences", "Std_Shared_Sequences",
+    "Avg_Shared_Suffixes", "Min_Shared_Suffixes", "Max_Shared_Suffixes", "Std_Shared_Suffixes",
+    "Avg_Rhymes", "Min_Rhymes", "Max_Rhymes", "Std_Rhymes"
+]
+
 logging.basicConfig(level=logging.INFO)
 
-""" Creates a CSV file calcuWlating the scores between each word (plus other stats)
+""" Creates a CSV file calculating the scores between each word (plus other stats)
 Segments each Letter-Pair into their own files (e.g., A-B, A-C, etc...)
 NOTE: Does not create redundant letter pairs
 - E.G., A-B and B-A are not created separately since they would be identical (just reversed).
 """
-def write_word_pair_scores(p_dict, p_dict_norm, words_by_letters, csv_headers, filename_template):
+def write_word_pair_scores(p_dict, p_dict_norm, words_by_letters, csv_headers=CSV_WORD_PAIR_HEADERS):
 
     csv_base_dir = os.path.join("CSV Files")
     os.makedirs(csv_base_dir, exist_ok=True)
 
     LETTERS = list(string.ascii_uppercase)  # A-Z
+    filename_template = "word_pairs_{0}_{1}_data.csv"
 
     logging.info("Letters: " + ", ".join(LETTERS))
 
@@ -66,7 +96,7 @@ def write_word_pair_scores(p_dict, p_dict_norm, words_by_letters, csv_headers, f
                                     data["phoneme_audio_distance"]])   
 
 
-def write_word_averages(p_dict, p_dict_norm, words_by_letter, csv_headers):
+def write_word_averages(p_dict, p_dict_norm, words_by_letter, csv_headers=CSV_WORD_AVERAGE_HEADERS):
 
     logging.info("Calculating Word Averages...")
     csv_filename = os.path.join("CSV Files", "word_averages.csv")

@@ -8,72 +8,6 @@ from nltk.corpus import cmudict, wordnet
 from nltk.stem import WordNetLemmatizer
 from tqdm import tqdm
 
-PHONEME_COORDINATES = {   
-    # VOWELS    
-    # Vowel |  Backness | Height | Roundness
-    #   0 = Front,  0.5 = Central, 1 = Back
-    #   0 = Low [Open], 0.5 = Mid, 1 = High [Close]
-    #   0 = Rounded, 1 = Unrounded
-    "AA":  (0,  1,      0,       0),    # ɑ             father
-    "AE":  (0,  0,      0,       0),    # æ             cat
-    "AH":  (0,  0.5,    0.5,     0),    # ʌ or ə        cut
-    "AO":  (0,  1,      0.5,     1),    # ɔ`            caught
-    "AW":  (0,  0.75,   0.5,     1),    # aʊ            cow
-    "AX":  (0,  0.5,    0.5,     0),    # ə (schwa)     about
-    "AY":  (0,  0.5,    0.5,     0),    # aɪ            my
-    "EY":  (0,  0,      0.65,    0),    # e             they
-    "EH":  (0,  0,      0.5,     0),    # ɛ             bed
-    "ER":  (0,  0.5,    0.5,     0),    # ɚ or ɝ        her
-    "IY":  (0,  0,      1,       0),    # i             see
-    "IH":  (0,  0,      0.85,    0),    # ɪ             sit
-    "OW":  (0,  1,      0.65,    1),    # o             go
-    "OY":  (0,  0.5,    0.5,     0.5),  # ɔɪ            toy
-    "UW":  (0,  1,      1,       1),    # u             too
-    "UH":  (0,  1,      0.85,    1),    # ʊ             put
-    
-    # CONSONANTS
-    # Consonant | Place of Articulation | Manner of Articulation | Voiced/Unvoiced
-    # 0 = Bilabial, 0.2 = Labiodental, 0.4 = Dental, 0.6 = Alveolar, 0.8 = Velar, 1 = Glottal
-    # 0 = Stop, 0.125 = Affricate, 0.25 = Fricative, 0.5 = Nasal, 0.75 = Lateral Liquid, 0.875 = Rhotic Liquid, 1 = Glide
-    # 0 = Voiceless, 1 = Voiced
-    
-    # Stops
-    "P":  (1, 0,    0,      0),  # voiceless bilabial stop              pat
-    "B":  (1, 0,    0,      1),  # voiced bilabial stop                 bat
-    "D":  (1, 0.4,  0,      1),  # voiced alveolar stop                 dog
-    "T":  (1, 0.4,  0,      0),  # voiceless alveolar stop              top
-    "K":  (1, 0.8,  0,      0),  # voiceless velar stop                 cat
-    "G":  (1, 0.8,  0,      1),  # voiced velar stop                    go
-    
-    # Affricates
-    "CH": (1, 0.6,  0.125,  0),  # voiceless postalveolar affricate     chip
-    "JH": (1, 0.6,  0.125,  1),  # voiced postalveolar affricate        judge
-
-    # Fricatives
-    "F":  (1, 0.2,  0.25,   0),  # voiceless labiodental fricative      fish
-    "V":  (1, 0.2,  0.25,   1),  # voiced labiodental fricative         van
-    "TH": (1, 0.4,  0.25,   0),  # voiceless dental fricative           thin
-    "DH": (1, 0.4,  0.25,   1),  # voiced dental fricative              then
-    "S":  (1, 0.4,  0.25,   0),  # voiceless alveolar fricative         see
-    "Z":  (1, 0.4,  0.25,   1),  # voiced alveolar fricative            zoo
-    "SH": (1, 0.6,  0.25,   0),  # voiceless postalveolar fricative     she
-    "ZH": (1, 0.6,  0.25,   1),  # voiced postalveolar fricative        measure
-    "HH": (1, 1,    0.25,   0),  # voiceless glottal fricative          he
-
-    # Nasals
-    "M":  (1, 0,    0.5,    1),  # bilabial nasal                       me
-    "N":  (1, 0.4,  0.5,    1),  # alveolar nasal                       no
-    "NG": (1, 0.8,  0.5,    1),  # velar nasal                          sing
-
-    # Liquids
-    "L":  (1, 0.4,  0.75,   1),  # alveolar lateral liquid              leaf    
-    "R":  (1, 0.4,  0.875,  1),  # alveolar rhotic liquid               red
-
-    # Glides (approximants)
-    "Y":  (1, 0.6,  1,      1),  # palatal glide    (IPA: /j/)          yes
-    "W":  (1, 0,    1,      1)   # bilabial glide   (IPA: /w/)          we
-}   
-
 CUSTOM_WORDS = {
     "amogus": ["AH", "M", "OW", "G", "Y", "UW", "S"],
     "atrioc": ["AH", "T", "R", "IY", "AA", "K"],
@@ -225,7 +159,6 @@ cur.execute("PRAGMA temp_store = MEMORY")
 
 # --- Load CMU dictionary ---
 cmu_dict = cmudict.dict()
-lemmatizer = WordNetLemmatizer()
 
 # --- Populate cmudict with batching ---
 batch_data = []
@@ -233,6 +166,7 @@ batch_size = 1000
 
 cur.execute("BEGIN TRANSACTION")
 
+lemmatizer = WordNetLemmatizer()
 for w in tqdm(cmu_dict.keys(), desc="Populating cmudict table"):
     pronunciation_string = " ".join(cmu_dict[w][0])
     norm_pron = normalize_phoneme(cmu_dict[w][0])

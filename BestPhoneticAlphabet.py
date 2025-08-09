@@ -25,41 +25,10 @@ from scoring import (candidate_gen, normalize_phoneme, _score_candidate)
 
 # Constants and Settings
 LETTERS = list(string.ascii_uppercase)
-WORD_PAIR_FILENAME_TEMPLATE:str = "word_pairs_{0}_{1}_data.csv"
-PHONEME_COORDINATE_DISTANCE_FILENAME:str = "phoneme_coordinate_distance.csv"
-PHONEME_AUDIO_DISTANCE_FILENAME:str = "phoneme_audio_distance.csv"
-LETTER_PAIR_FILENAME:str = "letter_pair_averages.csv"
 
 # Phoneme Coordinates
 PHONEME_DICT = defaultdict(list)
 WORDS_BY_LETTER = defaultdict(list)
-
-# CSV Headers
-CSV_WORD_PAIR_HEADERS:list[str] = [
-    "Source", "Target", "Score",
-    "Source-Phonemes", "Target-Phonemes",
-    "Levenshtein Distance", "Phoneme Distance", 
-    "Shared Sequence Count", "Sequences",
-    "Suffix Count", "Suffixes",
-    "Rhyme Count", "Rhymes",
-    "Phoneme Audio Distance"
-]
-CSV_DISTANCE_AVERAGE_HEADERS:list[str] = [
-    "Source", "Target", "Total Word Pairs",
-    "Min Lev", "Max Lev", "Avg Lev", "Std Dev Lev",
-    "Min Phoneme", "Max Phoneme", "Avg Phoneme", "Std Dev Phoneme",
-    "Min Shared", "Max Shared", "Avg Shared", "Std Dev Shared",
-    "Min Score", "Max Score", "Avg Score", "Std Dev Score"
-]
-CSV_WORD_AVERAGE_HEADERS:list[str] =  [
-    "Word", "Letter", "Phonemes", "Phoneme_Count", "Phoneme_Magnitude", "Comparisons_Made",
-    "Avg_Score", "Min_Score", "Max_Score", "Std_Score",
-    "Avg_Levenshtein", "Min_Levenshtein", "Max_Levenshtein", "Std_Levenshtein",
-    "Avg_Phoneme_Distance", "Min_Phoneme_Distance", "Max_Phoneme_Distance", "Std_Phoneme_Distance",
-    "Avg_Shared_Sequences", "Min_Shared_Sequences", "Max_Shared_Sequences", "Std_Shared_Sequences",
-    "Avg_Shared_Suffixes", "Min_Shared_Suffixes", "Max_Shared_Suffixes", "Std_Shared_Suffixes",
-    "Avg_Rhymes", "Min_Rhymes", "Max_Rhymes", "Std_Rhymes"
-]
 
 # Word and Phoneme Blacklists and Whitelists
 # TODO: Convert to JSON User Settings
@@ -535,10 +504,10 @@ def main():
         input()
         print("---------------------------------")
         logging.info("Generating Word Pair Scores")
-        write_word_pair_scores(p_dict=PHONEME_DICT, p_dict_norm=PHONEME_DICT_NORMALIZED, words_by_letters=WORDS_BY_LETTER, csv_headers=CSV_WORD_PAIR_HEADERS, filename_template=WORD_PAIR_FILENAME_TEMPLATE)
+        write_word_pair_scores(p_dict=PHONEME_DICT, p_dict_norm=PHONEME_DICT_NORMALIZED, words_by_letters=WORDS_BY_LETTER)
 
     elif choice == "Generate Word Averages":
-        write_word_averages(p_dict=PHONEME_DICT, p_dict_norm=PHONEME_DICT_NORMALIZED, words_by_letter=WORDS_BY_LETTER, csv_headers=CSV_WORD_AVERAGE_HEADERS)
+        write_word_averages(p_dict=PHONEME_DICT, p_dict_norm=PHONEME_DICT_NORMALIZED, words_by_letter=WORDS_BY_LETTER)
 
     elif choice == "Find Best (Randomized Trial)":
         logging.info("Finding Best Phonetic Alphabet via Randomized Trial...")

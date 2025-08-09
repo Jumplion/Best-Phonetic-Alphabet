@@ -2,10 +2,10 @@ from flask import Flask, request, jsonify, render_template
 import sys
 import os
 
+# Requires that this line comes before the following imports!!!!!
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from BestPhoneticAlphabet import get_candidates_from_db
 from scoring import analyze_alphabet
-
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 app = Flask(__name__)
 
@@ -16,7 +16,10 @@ def index():
 @app.route('/grade', methods=['POST'])
 def grade_alphabet():
     data = request.get_json()
+    print(f"Received data: {data}")
     result = analyze_alphabet(data)
+    print(f"Analysis result: {result}")
+    print(f"JSONIFIED: {jsonify(result)}")
     return jsonify(result)
 
 # In your web app

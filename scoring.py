@@ -42,7 +42,7 @@ def analyze_alphabet(data):
     selected_words = data.get("selected_words", [])
     phoneme_suffix_length = data.get("phoneme_suffix_length", 2)
     weights = data.get("weights", None)
-    
+
     # Score the candidate alphabet
     return _score_candidate(selected_words, phoneme_suffix_length, weights)
 
