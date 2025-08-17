@@ -7,8 +7,8 @@ import numpy as np
 from tqdm import tqdm
 from collections import defaultdict
 
-from scoring import _score_candidate
-from phoneme_utils import PHONEME_COORDINATES, PHONEME_DISTANCES
+from src.scoring import _score_candidate
+from src.phoneme_utils import PHONEME_COORDINATES
 
 # CSV Headers
 CSV_WORD_PAIR_HEADERS:list[str] = [
@@ -48,7 +48,7 @@ NOTE: Does not create redundant letter pairs
 """
 def write_word_pair_scores(p_dict, p_dict_norm, words_by_letters, csv_headers=CSV_WORD_PAIR_HEADERS):
 
-    csv_base_dir = os.path.join("CSV Files")
+    csv_base_dir = os.path.join("data", "CSV_Files")
     os.makedirs(csv_base_dir, exist_ok=True)
 
     LETTERS = list(string.ascii_uppercase)  # A-Z
@@ -99,7 +99,7 @@ def write_word_pair_scores(p_dict, p_dict_norm, words_by_letters, csv_headers=CS
 def write_word_averages(p_dict, p_dict_norm, words_by_letter, csv_headers=CSV_WORD_AVERAGE_HEADERS):
 
     logging.info("Calculating Word Averages...")
-    csv_filename = os.path.join("CSV Files", "word_averages.csv")
+    csv_filename = os.path.join("data", "CSV_Files", "word_averages.csv")
 
     # Create the CSV file and write the header. We'll write the results as we calculate
     with open(csv_filename, "w", newline="") as f:

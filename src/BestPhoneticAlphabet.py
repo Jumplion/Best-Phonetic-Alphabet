@@ -19,9 +19,9 @@ from nltk.stem import WordNetLemmatizer
 import sqlite3
 from datetime import datetime
 
-from csv_writers import (write_word_pair_scores, write_word_averages)
-from csv_readers import (read_word_averages)
-from scoring import (candidate_gen, normalize_phoneme, _score_candidate)
+from src.csv_writers import (write_word_pair_scores, write_word_averages)
+from src.csv_readers import (read_word_averages)
+from src.scoring import (candidate_gen, normalize_phoneme, _score_candidate)
 
 # Constants and Settings
 LETTERS = list(string.ascii_uppercase)
@@ -283,7 +283,7 @@ def find_best_set_randomized(words_by_letter, trials=1000, preselected_words=Non
 
     return best_scores
 
-def save_candidates_to_db(top_candidates, trial_name="random_search", db_path="phoneme_data.db"):
+def save_candidates_to_db(top_candidates, trial_name="random_search", db_path=os.path.join("data", "phoneme_data.db")):
     """Save alphabet candidates to the database."""
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
@@ -293,9 +293,9 @@ def save_candidates_to_db(top_candidates, trial_name="random_search", db_path="p
     for candidate in top_candidates:
         # Pad candidate list to 26 words if needed
         candidate_words = []
-        for l in LETTERS:
+        for let in LETTERS:
             for w in candidate:
-                if w.startswith(l):
+                if w.startswith(let):
                     candidate_words.append(w)
                     break
             else:
@@ -325,7 +325,7 @@ def save_candidates_to_db(top_candidates, trial_name="random_search", db_path="p
     conn.close()
     print(f"✅ Saved {len(batch_data)} candidates to database")
 
-def get_candidates_from_db(metric_type=None, limit=10, db_path="phoneme_data.db"):
+def get_candidates_from_db(metric_type=None, limit=10, db_path=os.path.join("data", "phoneme_data.db")):
     """Retrieve candidates from the database."""
     conn = sqlite3.connect(db_path)
     

@@ -8,7 +8,7 @@ logging.basicConfig(level=logging.INFO)
 
 """ Reads a csv file for a specific letter pair (e.g., A-B) and returns it as a dictionary. """
 def read_letter_pair_scores(target_letter, compare_letter, filename_template, csv_headers):
-    filename = os.path.join("CSV Files", filename_template.format(target_letter, compare_letter))
+    filename = os.path.join("data", "CSV_Files", filename_template.format(target_letter, compare_letter))
     distance_dict = defaultdict(dict)
     if not os.path.exists(filename):
         logging.warning(f"Distance matrix file '{filename}' does not exist.")
@@ -39,7 +39,7 @@ def read_letter_pair_scores(target_letter, compare_letter, filename_template, cs
 
 
 def read_word_averages(filename="word_averages.csv"):
-    filename = os.path.join("CSV Files", filename)
+    filename = os.path.join("data", "CSV_Files", filename)
 
     if not os.path.exists(filename):
         logging.warning(f"Word averages file '{filename}' does not exist.")
