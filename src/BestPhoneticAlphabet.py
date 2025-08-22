@@ -19,9 +19,9 @@ from nltk.stem import WordNetLemmatizer
 import sqlite3
 from datetime import datetime
 
-from src.csv_writers import (write_word_pair_scores, write_word_averages)
-from src.csv_readers import (read_word_averages)
-from src.scoring import (candidate_gen, normalize_phoneme, _score_candidate)
+from csv_writers import (update_word_averages, write_word_pair_scores)
+from csv_readers import (read_word_averages)
+from scoring import (candidate_gen, normalize_phoneme, _score_candidate)
 
 # Constants and Settings
 LETTERS = list(string.ascii_uppercase)
@@ -283,7 +283,7 @@ def find_best_set_randomized(words_by_letter, trials=1000, preselected_words=Non
 
     return best_scores
 
-def save_candidates_to_db(top_candidates, trial_name="random_search", db_path=os.path.join("data", "phoneme_data.db")):
+def save_candidates_to_db(top_candidates, trial_name="random_search", db_path=os.path.join("..", "data", "phoneme_data.db")):
     """Save alphabet candidates to the database."""
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
@@ -325,7 +325,7 @@ def save_candidates_to_db(top_candidates, trial_name="random_search", db_path=os
     conn.close()
     print(f"✅ Saved {len(batch_data)} candidates to database")
 
-def get_candidates_from_db(metric_type=None, limit=10, db_path=os.path.join("data", "phoneme_data.db")):
+def get_candidates_from_db(metric_type=None, limit=10, db_path=os.path.join("..", "data", "phoneme_data.db")):
     """Retrieve candidates from the database."""
     conn = sqlite3.connect(db_path)
     
@@ -440,10 +440,13 @@ def get_cleaned_cmu_dict():
 # UTILITY FUNCTIONS
 # -------------------------------
 
-def load_user_settings(settings_path="user_settings.json"):
-    if not os.path.exists(settings_path):
-        raise FileNotFoundError(f"Settings file not found: {settings_path}")
-    with open(settings_path, "r") as f:
+def load_user_settings(settings_path="../user_settings.json"):
+    """ Load user settings from a JSON file. """
+    filepath = os.path.join(os.path.dirname(__file__), settings_path)
+
+    if not os.path.exists(filepath):
+        raise FileNotFoundError(f"Settings file not found: {filepath}")
+    with open(filepath, "r") as f:
         settings = json.load(f)
     return settings
 
@@ -507,7 +510,8 @@ def main():
         write_word_pair_scores(p_dict=PHONEME_DICT, p_dict_norm=PHONEME_DICT_NORMALIZED, words_by_letters=WORDS_BY_LETTER)
 
     elif choice == "Generate Word Averages":
-        write_word_averages(p_dict=PHONEME_DICT, p_dict_norm=PHONEME_DICT_NORMALIZED, words_by_letter=WORDS_BY_LETTER)
+        update_word_averages()
+        #write_word_averages(p_dict=PHONEME_DICT, p_dict_norm=PHONEME_DICT_NORMALIZED, words_by_letter=WORDS_BY_LETTER)
 
     elif choice == "Find Best (Randomized Trial)":
         logging.info("Finding Best Phonetic Alphabet via Randomized Trial...")

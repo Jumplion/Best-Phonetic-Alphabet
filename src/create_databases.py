@@ -1,11 +1,8 @@
 import os
 import sqlite3
-import pandas as pd
-import ast
-import re
 from src.scoring import normalize_phoneme
 import nltk
-from nltk.corpus import cmudict, wordnet
+from nltk.corpus import cmudict
 from nltk.stem import WordNetLemmatizer
 from tqdm import tqdm
 
@@ -113,7 +110,7 @@ CUSTOM_WORDS = {
 }
 
 # --- File paths ---
-output_db_path = os.path.join("data", "phoneme_data.db")
+output_db_path = os.path.join("..", "data", "phoneme_data.db")
 
 nltk.download('cmudict')
 nltk.download('wordnet')

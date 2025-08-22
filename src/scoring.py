@@ -5,7 +5,7 @@ import random
 import numpy as np
 import editdistance
 
-from src.phoneme_utils import PHONEME_COORDINATES, PHONEME_DISTANCES 
+from phoneme_utils import PHONEME_COORDINATES, PHONEME_DISTANCES 
 
 """ Extract the rhyme portion of a phoneme list.
 NOTE: Requires the phoneme list to have stress markers (e.g., '1' for primary stress).
@@ -50,7 +50,7 @@ def analyze_alphabet(data):
 def _score_candidate(selected_words, phoneme_suffix_length=2, weights=None):
 
     # Connect to database
-    db_path = os.path.join("data", "phoneme_data.db")
+    db_path = os.path.join("..", "data", "phoneme_data.db")
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
 
@@ -61,15 +61,12 @@ def _score_candidate(selected_words, phoneme_suffix_length=2, weights=None):
             SELECT word, pronunciation, norm_pron, syllables, lemma, avg_score
             FROM cmudict 
             WHERE word = ?
-        """, (word.lower(),))
-        
+        """, (word,))
+
         result = cur.fetchone()
         word_data[word] = {
             'pronunciation': result[1].split() if result[1] else [],
             'norm_pron': result[2].split() if result[2] else [],
-            'syllables': result[3] if result[3] is not None else 0,
-            'lemma': result[4] if result[4] is not None else word,
-            'avg_score': result[5] if result[5] is not None else 0.0
         }
     
     conn.close()

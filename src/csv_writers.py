@@ -2,13 +2,14 @@ import os
 import csv
 import math
 import logging
+import sqlite3
 import string
 import numpy as np
 from tqdm import tqdm
 from collections import defaultdict
 
-from src.scoring import _score_candidate
-from src.phoneme_utils import PHONEME_COORDINATES
+from scoring import _score_candidate
+from phoneme_utils import PHONEME_COORDINATES
 
 # CSV Headers
 CSV_WORD_PAIR_HEADERS:list[str] = [
@@ -84,7 +85,7 @@ def write_word_pair_scores(p_dict, p_dict_norm, words_by_letters, csv_headers=CS
 
                 # Calculate distances for each word pair
                 for w1, w2 in tqdm(pairs, total=len(pairs), desc=f"Calculating and Writing to CSV: {l1}_{l2}", unit=" word pair", leave=False, colour="yellow"):
-                    data = _score_candidate(selected_words=[w1, w2], p_norm_dict=p_dict_norm, phoneme_suffix_length=2, weights=None)
+                    data = _score_candidate(selected_words=[w1, w2], phoneme_suffix_length=2, weights=None)
                     p1, p2 = p_dict[w1][0], p_dict[w2][0]
                     # Write the data to the main CSV file   
                     writer.writerow([w1, w2, data["score"],
@@ -94,7 +95,6 @@ def write_word_pair_scores(p_dict, p_dict_norm, words_by_letters, csv_headers=CS
                                     data["shared_suffix"][0], data["shared_suffix"][1],
                                     data["rhyme"][0], data["rhyme"][1],
                                     data["phoneme_audio_distance"]])   
-
 
 def write_word_averages(p_dict, p_dict_norm, words_by_letter, csv_headers=CSV_WORD_AVERAGE_HEADERS):
 
@@ -168,6 +168,40 @@ def write_word_averages(p_dict, p_dict_norm, words_by_letter, csv_headers=CSV_WO
 
     logging.info(f"Word averages saved to '{csv_filename}'")
     return word_averages
+
+def update_word_averages():
+
+    logging.info("Calculating Word Averages...")
+    # Since we are running the program in the src folder
+    database_filename = os.path.join("..", "data", "phoneme_data.db")
+
+    # For SQLite database connection
+    conn = sqlite3.connect(database_filename)
+    cursor = conn.cursor()
+
+    # For each row of the cmudict table — read words as plain strings (not tuples)
+    cursor.execute("SELECT word FROM cmudict")
+    cmu_rows = cursor.fetchall()
+    cmu_words = [r[0] for r in cmu_rows]
+
+    for word in tqdm(cmu_words, desc="Processing Words", unit="word", colour="blue", leave=False):
+        running_scores: list[float] = []
+        # Calculate scores against all other words starting with different letters
+        for other_word in tqdm(cmu_words, desc=f"Scoring {word}", unit="comparison", leave=False, colour="red"):
+            # skip comparisons with words that start with the same letter
+            if not other_word or other_word[0].upper() == word[0].upper():
+                continue
+            result = _score_candidate([word, other_word])
+            running_scores.append(float(result.get("score", 0.0)))
+
+        avg = float(np.mean(running_scores)) if running_scores else 0.0
+
+        # Update the cmudict table with the new average score (use parameterized query)
+        cursor.execute("UPDATE cmudict SET avg_score = ? WHERE word = ?", (avg, word))
+        conn.commit()
+
+    logging.info("Word averages updated in the database.")
+    conn.close()
 
 
 def write_phoneme_coord_distance_dict(p_coords, filename):
