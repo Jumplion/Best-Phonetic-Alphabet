@@ -19,8 +19,6 @@ from nltk.stem import WordNetLemmatizer
 import sqlite3
 from datetime import datetime
 
-from csv_writers import (update_word_averages, write_word_pair_scores)
-from csv_readers import (read_word_averages)
 from scoring import (candidate_gen, normalize_phoneme, _score_candidate)
 
 # Constants and Settings
@@ -197,163 +195,6 @@ BANNED_PHONEME_PREFIXES = {
     "z" : []
 }
 
-# --------------
-# Main Search Function
-# --------------
-
-""" Find the best set of words via random sampling. """
-def find_best_set_randomized(words_by_letter, trials=1000, preselected_words=None, top_candidates=100, save_each_candidate=False):
-
-    logging.info("Starting Randomized Search for Best Set of Words...")
-    
-    trial_name = f"random_search_{trials}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-
-    # Track top N candidates for each metric
-    TOP_N = max(10, top_candidates)
-    top_candidates = []
-
-    # Handle preselected words
-    preselected_by_letter = {}
-    if preselected_words:
-        for w in preselected_words:
-            le = w[0].upper()
-            preselected_by_letter[le] = min(preselected_by_letter[le], w) if le in preselected_by_letter else w
-
-    calculation_times = []
-    for c in tqdm(candidate_gen(trials, words_by_letter, preselected_by_letter), total=trials, desc="Generating and Scoring Candidates", unit=" candidate", colour="green"):
-        start_time = time.time()
-        results = _score_candidate(selected_words=c, phoneme_suffix_length=2, weights=None)
-        calculation_times.append(time.time() - start_time)
-        
-        candidate_entry = {
-            "candidate": sorted(list(c)),
-            "score": results["score"],
-            "total_levenshtein": results["total_levenshtein"],
-            "total_phoneme_distance": results["total_phoneme_distance"],
-            "shared_sequence": results["shared_sequence"][0],
-            "shared_suffix": results["shared_suffix"][0]
-        }
-        
-        top_candidates.append(candidate_entry)
-        
-        if len(top_candidates) > TOP_N:
-            top_candidates.sort(key=lambda x: x["score"], reverse=True)
-            top_candidates.pop()
-
-        if save_each_candidate:
-            save_candidates_to_db([candidate_entry], trial_name=trial_name)
-
-    # Write all top candidates to CSV
-    logging.info("Writing Top Candidates to CSV")
-    headers = ["Score", "Total Levenshtein Distance", "Total Phoneme Distance", 
-               "Total Shared Sequences", "Total Shared Suffixes"] + list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
-
-    with open("best_random_search.csv", "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(headers)
-        
-        # Write top candidates for each metric
-        for entry in top_candidates:
-            row = [
-                entry["score"],
-                entry["total_levenshtein"],
-                entry["total_phoneme_distance"],
-                    entry["shared_sequence"],
-                    entry["shared_suffix"]
-                ] + entry["candidate"]
-            writer.writerow(row)
-
-
-
-    logging.info(f"Top {TOP_N} candidates saved to 'best_random_search.csv'")
-
-    # Save to database before returning
-
-    save_candidates_to_db(top_candidates, trial_name=trial_name)
-
-    # Return best scores in original format for compatibility
-    best_scores = {
-        "levenshtein": (top_candidates[0]["total_levenshtein"], top_candidates[0]["candidate"]) if top_candidates else (float('-inf'), []),
-        "phoneme": (top_candidates[0]["total_phoneme_distance"], top_candidates[0]["candidate"]) if top_candidates else (float('-inf'), []),
-        "seq": (top_candidates[0]["shared_sequence"], top_candidates[0]["candidate"]) if top_candidates else (float('inf'), []),
-        "suffix": (top_candidates[0]["shared_suffix"], top_candidates[0]["candidate"]) if top_candidates else (float('inf'), []),
-        "score": (top_candidates[0]["score"], top_candidates[0]["candidate"]) if top_candidates else (float('-inf'), []),
-        "avg_calc_time": np.mean(calculation_times) if calculation_times else 0.0
-    }
-
-    return best_scores
-
-def save_candidates_to_db(top_candidates, trial_name="random_search", db_path=os.path.join("..", "data", "phoneme_data.db")):
-    """Save alphabet candidates to the database."""
-    conn = sqlite3.connect(db_path)
-    cur = conn.cursor()
-    
-    batch_data = []
-    
-    for candidate in top_candidates:
-        # Pad candidate list to 26 words if needed
-        candidate_words = []
-        for let in LETTERS:
-            for w in candidate:
-                if w.startswith(let):
-                    candidate_words.append(w)
-                    break
-            else:
-                candidate_words.append("")  # Fill with empty string if no word found
-
-        batch_data.append((
-            trial_name,
-            candidate["score"],
-            candidate["total_levenshtein"],
-            candidate["total_phoneme_distance"],
-            candidate["shared_sequence"],
-            candidate["shared_suffix"],
-            *candidate_words  # Unpack the 26 words
-        ))
-
-    cur.executemany("""
-        INSERT INTO alphabet_candidates (
-            trial_name, total_score,
-            total_levenshtein, total_phoneme_distance, shared_sequences, shared_suffixes,
-            word_a, word_b, word_c, word_d, word_e, word_f, word_g, word_h, word_i, word_j,
-            word_k, word_l, word_m, word_n, word_o, word_p, word_q, word_r, word_s, word_t,
-            word_u, word_v, word_w, word_x, word_y, word_z
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, batch_data)
-    
-    conn.commit()
-    conn.close()
-    print(f"✅ Saved {len(batch_data)} candidates to database")
-
-def get_candidates_from_db(metric_type=None, limit=10, db_path=os.path.join("..", "data", "phoneme_data.db")):
-    """Retrieve candidates from the database."""
-    conn = sqlite3.connect(db_path)
-    
-    query = """
-        SELECT * FROM alphabet_candidates 
-        WHERE (? IS NULL OR metric_type = ?)
-        ORDER BY
-            rank_position
-        LIMIT ?
-    """
-    
-    df = pd.read_sql_query(query, conn, params=[metric_type, metric_type, limit])
-    conn.close()
-    
-    return df
-
-def get_alphabet_from_candidate(candidate_row):
-    """Extract the 26-word alphabet from a candidate row."""
-    letters = 'abcdefghijklmnopqrstuvwxyz'
-    alphabet = {}
-    
-    for letter in letters:
-        word = candidate_row[f'word_{letter}']
-        if word:
-            alphabet[letter.upper()] = word
-    
-    return alphabet
-
 # -------------------------------
 # Dictionary Functions
 # -------------------------------
@@ -385,7 +226,7 @@ def get_cleaned_cmu_dict():
     filter_phoneme_prefixes = settings["filter_phoneme_prefixes"]
     filter_averages = settings["filter_averages"]
 
-    word_averages = read_word_averages()
+    word_averages = None #read_word_averages()
     if word_averages is None:
         logging.error("Word averages file not found. Dictionary won't filter out words based on averages.")
     min_avg = np.mean(list(word_averages.values())) if word_averages else 0.0
@@ -454,8 +295,7 @@ def load_user_settings(settings_path="../user_settings.json"):
 # Main Function
 # -------------------------------
 
-def main():
-    
+def main():   
     logging.basicConfig(
         level=logging.INFO,  # Change to DEBUG for more detail, WARNING for less
         format='[%(levelname)s]: %(message)s',
@@ -472,18 +312,12 @@ def main():
     nltk.download('wordnet')
 
     # TODO: Rewrite so that it utilizes the phoneme_data.db stuff
-    PHONEME_DICT = get_cleaned_cmu_dict()
-    PHONEME_DICT_NORMALIZED = {w: normalize_phoneme(PHONEME_DICT[w][0]) for w in PHONEME_DICT.keys()}
+    PHONEME_DICT = None #get_cleaned_cmu_dict()
 
-    WORDS_BY_LETTER = defaultdict(list)
-    for word in tqdm(PHONEME_DICT.keys(), desc="Grouping Words by First Letter", unit="word"):
-        WORDS_BY_LETTER[word[0].upper()].append(word)
 
     choices = {
-        '1': "Generate Word Pair Scores",
-        '2': "Generate Word Averages",
-        '3': "Find Best (Randomized Trial)",
-        '4': "Score Premade Alphabet"
+        '1': "Find Best (Randomized Trial)",
+        '2': "Score Premade Alphabet"
     }
 
     logging.info("Best Phonetic Alphabet Utility")
@@ -498,43 +332,6 @@ def main():
     if not choice:
         print("Invalid choice. Please run the program again.")
         return
-
-    if choice == "Generate Word Pair Scores":
-        logging.info("Generating Word Pair Scores")
-        print("\n---------------WARNING-----------------")
-        print("\nThis operation will take a long time and will generate a LARGE number of BIG .csv files!!")
-        print("\nPress Enter to continue or [Ctrl+C] to cancel.")
-        input()
-        print("---------------------------------")
-        logging.info("Generating Word Pair Scores")
-        write_word_pair_scores(p_dict=PHONEME_DICT, p_dict_norm=PHONEME_DICT_NORMALIZED, words_by_letters=WORDS_BY_LETTER)
-
-    elif choice == "Generate Word Averages":
-        update_word_averages()
-        #write_word_averages(p_dict=PHONEME_DICT, p_dict_norm=PHONEME_DICT_NORMALIZED, words_by_letter=WORDS_BY_LETTER)
-
-    elif choice == "Find Best (Randomized Trial)":
-        logging.info("Finding Best Phonetic Alphabet via Randomized Trial...")
-
-        TRIALS = 10000 #load_user_settings()["trials"]
-        best_scores = find_best_set_randomized(words_by_letter=WORDS_BY_LETTER, trials=TRIALS, top_candidates=100)
-        logging.info(f"Best Scores Found in {TRIALS} Trials")
-        logging.info(f"Average Calculation Time: {best_scores['avg_calc_time']:.6f} seconds")
-
-        logging.info("--------------------------------")
-        logging.info(f"Best Overall Set ({best_scores['score']:,.6f}):")
-        logging.info("--------------------------------")
-        for word in best_scores['score'][1]:
-            logging.info(f"{word.capitalize():-12s}  ->  {' '.join(PHONEME_DICT[word][0])}")
-
-    elif choice == "Score Premade Alphabet":
-        NATO = [w for w in NATO_PHONETIC_ALPHABET if w in PHONEME_DICT]
-        best_scores = _score_candidate(selected_words=NATO, phoneme_suffix_length=2, weights=None)
-        logging.info("--------------------------------")
-        logging.info(f"NATO Score ({best_scores['score']:,.2f}):")
-        logging.info("--------------------------------")
-        for word in NATO:
-            logging.info(f"{word.capitalize():-12s}  ->  {' '.join(PHONEME_DICT[word][0])}")
 
     else:
         print("Exiting Program.")

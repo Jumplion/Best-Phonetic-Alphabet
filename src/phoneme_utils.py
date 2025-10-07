@@ -1,25 +1,25 @@
 PHONEME_COORDINATES = {   
     # VOWELS    
-    # Vowel |  Backness | Height | Roundness
-    #   0 = Front,  0.5 = Central, 1 = Back
+    # Vowel | Height | Backness| Roundness
     #   0 = Low [Open], 0.5 = Mid, 1 = High [Close]
+    #   0 = Front,  0.5 = Central, 1 = Back
     #   0 = Rounded, 1 = Unrounded
-    "AA":  (0,  1,      0,       0),    # ɑ             father
-    "AE":  (0,  0,      0,       0),    # æ             cat
-    "AH":  (0,  0.5,    0.5,     0),    # ʌ or ə        cut
-    "AO":  (0,  1,      0.5,     1),    # ɔ`            caught
-    "AW":  (0,  0.75,   0.5,     1),    # aʊ            cow
-    "AX":  (0,  0.5,    0.5,     0),    # ə (schwa)     about
-    "AY":  (0,  0.5,    0.5,     0),    # aɪ            my
-    "EY":  (0,  0,      0.65,    0),    # e             they
-    "EH":  (0,  0,      0.5,     0),    # ɛ             bed
-    "ER":  (0,  0.5,    0.5,     0),    # ɚ or ɝ        her
-    "IY":  (0,  0,      1,       0),    # i             see
-    "IH":  (0,  0,      0.85,    0),    # ɪ             sit
-    "OW":  (0,  1,      0.65,    1),    # o             go
-    "OY":  (0,  0.5,    0.5,     0.5),  # ɔɪ            toy
-    "UW":  (0,  1,      1,       1),    # u             too
-    "UH":  (0,  1,      0.85,    1),    # ʊ             put
+    "AA":  (0,      0,    1,     0),    # ɑ             father
+    "AE":  (0,      0,    0,     0),    # æ             cat
+    "AH":  (0,      0.5,  0.5,   0),    # ʌ or ə        cut
+    "AO":  (0,      0.5,  1,     1),    # ɔ`            caught
+    "AW":  (0,      0.5,  0.75,  1),    # aʊ            cow
+    "AX":  (0,      0.5,  0.5,   0),    # ə (schwa)     about
+    "AY":  (0,      0.5,  0.5,   0),    # aɪ            my
+    "EY":  (0,      0.65, 0,     0),    # e             they
+    "EH":  (0,      0.5,  0,     0),    # ɛ             bed
+    "ER":  (0,      0.5,  0.5,   0),    # ɚ or ɝ        her
+    "IY":  (0,      1,    0,     0),    # i             see
+    "IH":  (0,      0.85, 0,     0),    # ɪ             sit
+    "OW":  (0,      0.65, 1,     1),    # o             go
+    "OY":  (0,      0.5,  0.5,   0.5),  # ɔɪ            toy
+    "UW":  (0,      1,    1,     1),    # u             too
+    "UH":  (0,      0.85, 1,     1),    # ʊ             put
     
     # CONSONANTS
     # Consonant | Place of Articulation | Manner of Articulation | Voiced/Unvoiced

@@ -41,8 +41,10 @@ CREATE TABLE IF NOT EXISTS phonemes (
     feature_vector JSON    -- e.g. '[1, 0.5, 0, 0.75, 0.8, 1]'
 );
 
--- CREATE INDEX IF NOT EXISTS idx_phonemes_is_vowel ON phonemes(is_vowel);
--- CREATE INDEX IF NOT EXISTS idx_phonemes_is_consonant ON phonemes(NOT is_vowel);
+CREATE INDEX IF NOT EXISTS idx_phonemes_is_vowel ON phonemes(is_vowel);
+CREATE INDEX IF NOT EXISTS idx_phonemes_is_consonant ON phonemes(NOT is_vowel);
+
+
 
 -- ============================================================
 -- TABLE: words
@@ -101,10 +103,10 @@ CREATE TABLE IF NOT EXISTS words (
     --     ON UPDATE CASCADE ON DELETE SET NULL
 );
 
--- CREATE INDEX IF NOT EXISTS idx_words_word ON words(word);
--- CREATE INDEX IF NOT EXISTS idx_words_lemma ON words(lemma);
--- CREATE INDEX IF NOT EXISTS idx_words_length ON words(word_length);
--- CREATE INDEX IF NOT EXISTS idx_words_syllables ON words(num_syllables);
+CREATE INDEX IF NOT EXISTS idx_words_word ON words(word);
+CREATE INDEX IF NOT EXISTS idx_words_lemma ON words(lemma);
+CREATE INDEX IF NOT EXISTS idx_words_length ON words(word_length);
+CREATE INDEX IF NOT EXISTS idx_words_syllables ON words(num_syllables);
 
 -- ============================================================
 -- TABLE: word_pairs (optional precomputed distances)

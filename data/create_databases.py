@@ -180,6 +180,91 @@ def parse_cmudict_line(line):
 
     return word, phonemes, pron_index
 
+def create_phoneme_db(conn):
+    phoneme_params = []
+    for ph, features in tqdm.tqdm(PHONEMES.items(), desc="Inserting phonemes", unit="phoneme", mininterval=5, ncols=80, smoothing=0.1):
+        phoneme_params.append(
+            (
+                ph,
+                1 if features[0] else 0,
+                features[1] if ph in VOWEL_SET else None,
+                features[2] if ph in VOWEL_SET else None,
+                features[3] if ph in VOWEL_SET else None,
+                features[1] if ph not in VOWEL_SET else None,
+                features[2] if ph not in VOWEL_SET else None,
+                features[3] if ph not in VOWEL_SET else None,
+            )
+        )
+    conn.executemany("""
+        INSERT INTO phonemes (
+            phoneme,
+            is_vowel,
+            height, backness, roundness,
+            place, manner, voicing
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, phoneme_params)
+    
+    conn.commit()
+    print(f"✅ Finished inserting {len(PHONEMES)} phonemes.")
+
+def create_word_db(conn):
+    # Calculate their stats and whatnot as well
+    with CMU_FILE.open(encoding="latin-1") as f:
+        for line in tqdm.tqdm(f, desc="Inserting words", unit="word"):
+            word, phonemes, pron_index = parse_cmudict_line(line)
+            if not word:
+                continue
+        insert_sql = """
+            INSERT INTO words (
+                word, lemma, cmu_pron_index,
+                phoneme_list, normalized_phoneme_list,
+                phoneme_count, unique_phoneme_count, 
+                num_syllables, primary_stress_index, stress_pattern,
+                word_length, 
+                orth_vowel_count, orth_consonant_count,
+                phon_vowel_count, phon_consonant_count,
+                orth_vowel_consonant_ratio, phon_vowel_consonant_ratio, grapheme_to_phoneme_ratio,
+                avg_vowel_height, avg_vowel_backness, avg_vowel_roundness,
+                avg_consonant_voicing, avg_consonant_place, avg_consonant_manner,
+                sonority_profile, sonority_rise_count, sonority_fall_count,
+                word_frequency, phonotactic_probability, source
+            ) VALUES (%s)
+        """
+        # Build a proper placeholder string for sqlite (question marks)
+        placeholder_count = 30  # number of columns in the INSERT above
+        insert_sql = insert_sql.replace("(%s)", "(" + ", ".join(["?"] * placeholder_count) + ")")
+
+        batch: list[tuple] = []
+        total = 0
+        with CMU_FILE.open(encoding="latin-1") as f:
+            for line in tqdm.tqdm(f, desc="Inserting words", unit="word", mininterval=5, ncols=80, smoothing=0.1):
+                word, phonemes, pron_index = parse_cmudict_line(line)
+                if not word:
+                    continue
+                # Guard against static type checker warnings and malformed lines
+                if phonemes is None:
+                    continue
+                if pron_index is None:
+                    pron_index = 0
+                params = word_to_params(word, phonemes, pron_index)
+                batch.append(params)
+
+                if len(batch) >= BATCH_SIZE:
+                    conn.executemany(insert_sql, batch)
+                    conn.commit()
+                    total += len(batch)
+                    print(f"Inserted {total} words...")
+                    batch.clear()
+
+        # Insert any remaining rows
+        if batch:
+            conn.executemany(insert_sql, batch)
+            conn.commit()
+            total += len(batch)
+            print(f"Inserted {total} words (final).")
+
+        conn.close()
+
 def word_to_params(word: str, phonemes: list[str], pron_index: int) -> tuple:
     """Return the parameter tuple for a single word insert (same order as INSERT)."""
     noun = LEMMATIZER.lemmatize(word.lower(), pos='n')
@@ -246,89 +331,12 @@ def main():
     run_sql_file(conn, sql_file)    # Create tables just incase
 
     # Populate the Phonemes table (batch insert)
-    phoneme_params = []
-    for ph, features in tqdm.tqdm(PHONEMES.items(), desc="Inserting phonemes", unit="phoneme", mininterval=5, ncols=80, smoothing=0.1):
-        phoneme_params.append(
-            (
-                ph,
-                1 if features[0] else 0,
-                features[1] if ph in VOWEL_SET else None,
-                features[2] if ph in VOWEL_SET else None,
-                features[3] if ph in VOWEL_SET else None,
-                features[1] if ph not in VOWEL_SET else None,
-                features[2] if ph not in VOWEL_SET else None,
-                features[3] if ph not in VOWEL_SET else None,
-            )
-        )
-    conn.executemany("""
-        INSERT INTO phonemes (
-            phoneme,
-            is_vowel,
-            height, backness, roundness,
-            place, manner, voicing
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    """, phoneme_params)
-    
-    conn.commit()
-    print(f"✅ Finished inserting {len(PHONEMES)} phonemes.")
+    if conn.execute("SELECT COUNT(*) FROM phonemes").fetchone()[0] == 0:
+        create_phoneme_db(conn)
 
     # Populate the Words table from CMUdict
-    # Calculate their stats and whatnot as well
-    with CMU_FILE.open(encoding="latin-1") as f:
-        for line in tqdm.tqdm(f, desc="Inserting words", unit="word", mininterval=5, ncols=80, smoothing=0.1):
-            word, phonemes, pron_index = parse_cmudict_line(line)
-            if not word:
-                continue
-        insert_sql = """
-            INSERT INTO words (
-                word, lemma, cmu_pron_index,
-                phoneme_list, normalized_phoneme_list,
-                phoneme_count, unique_phoneme_count, 
-                num_syllables, primary_stress_index, stress_pattern,
-                word_length, 
-                orth_vowel_count, orth_consonant_count,
-                phon_vowel_count, phon_consonant_count,
-                orth_vowel_consonant_ratio, phon_vowel_consonant_ratio, grapheme_to_phoneme_ratio,
-                avg_vowel_height, avg_vowel_backness, avg_vowel_roundness,
-                avg_consonant_voicing, avg_consonant_place, avg_consonant_manner,
-                sonority_profile, sonority_rise_count, sonority_fall_count,
-                word_frequency, phonotactic_probability, source
-            ) VALUES (%s)
-        """
-        # Build a proper placeholder string for sqlite (question marks)
-        placeholder_count = 30  # number of columns in the INSERT above
-        insert_sql = insert_sql.replace("(%s)", "(" + ", ".join(["?"] * placeholder_count) + ")")
-
-        batch: list[tuple] = []
-        total = 0
-        with CMU_FILE.open(encoding="latin-1") as f:
-            for line in tqdm.tqdm(f, desc="Inserting words", unit="word", mininterval=5, ncols=80, smoothing=0.1):
-                word, phonemes, pron_index = parse_cmudict_line(line)
-                if not word:
-                    continue
-                # Guard against static type checker warnings and malformed lines
-                if phonemes is None:
-                    continue
-                if pron_index is None:
-                    pron_index = 0
-                params = word_to_params(word, phonemes, pron_index)
-                batch.append(params)
-
-                if len(batch) >= BATCH_SIZE:
-                    conn.executemany(insert_sql, batch)
-                    conn.commit()
-                    total += len(batch)
-                    print(f"Inserted {total} words...")
-                    batch.clear()
-
-        # Insert any remaining rows
-        if batch:
-            conn.executemany(insert_sql, batch)
-            conn.commit()
-            total += len(batch)
-            print(f"Inserted {total} words (final).")
-
-        conn.close()
+    if conn.execute("SELECT COUNT(*) FROM words").fetchone()[0] == 0:
+        create_word_db(conn)
 
 if __name__ == "__main__":
     main()
