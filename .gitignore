@@ -202,3 +202,5 @@ Word Voicings/
 # Whitelist the user_settings.json
 !user_settings.json
 cmudict-0.7b
+*.db
+data/enWikiDump.jsonl
