@@ -203,4 +203,5 @@ Word Voicings/
 !user_settings.json
 cmudict-0.7b
 *.db
+*.db.bak
 data/enWikiDump.jsonl
