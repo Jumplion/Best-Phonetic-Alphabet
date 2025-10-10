@@ -446,6 +446,82 @@ def create_words_unique_by_lemma(conn):
     return cur.fetchone()[0]
 
 
+def create_word_pairs_table(conn: sqlite3.Connection):
+    """Create the `word_pairs` table used to store pairwise word comparisons.
+
+    Design notes:
+    - Each row represents one (unordered) pair of words from the `words` table.
+    - The application should insert pairs with (word_id_1 < word_id_2) to avoid
+      duplicates; a UNIQUE constraint enforces this at the DB level.
+    - Related features are grouped and some higher-cardinality comparisons
+      (e.g. n-gram overlaps) are stored both as scalar metrics and as a JSON
+      column for flexibility.
+    """
+    cur = conn.cursor()
+
+    cur.executescript("""
+    PRAGMA foreign_keys = ON;
+
+    CREATE TABLE IF NOT EXISTS word_pairs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+        -- references to words table (store with smaller id first to enforce unordered pairs)
+        word_id_1 INTEGER NOT NULL,
+        word_id_2 INTEGER NOT NULL,
+
+        -- Basic distances / scores
+        orth_levenshtein REAL,           -- orthographic edit distance
+        phon_levenshtein REAL,           -- phonetic edit distance (phoneme-level)
+        feature_weighted_phon_lev REAL,  -- phonetic distance weighted by feature differences
+        score REAL,                      -- combined or task-specific score
+
+        -- Sequence-based similarities
+        lcs INTEGER,                     -- longest common subsequence length (orthographic)
+
+        -- Prefix / suffix overlap (normalized ratios)
+        prefix_orth_overlap REAL,
+        suffix_orth_overlap REAL,
+        prefix_phon_overlap REAL,
+        suffix_phon_overlap REAL,
+
+        -- n-gram overlap metrics (scalar) and flexible JSON for detailed counts
+        phoneme_bigram_jaccard REAL,
+        phoneme_trigram_jaccard REAL,
+        phoneme_ngram_overlap JSON,
+
+        -- Rhyme / prosody features
+        rhyme_similarity REAL,
+        stress_pattern_similarity REAL,
+        syllabic_structure_match INTEGER,
+
+        -- Path / transition and neighborhood features
+        phonetic_path_smoothness REAL,
+        neighborhood_density_diff REAL,
+
+        -- Generic set similarity (can be used for grapheme/phoneme sets)
+        jaccard_index REAL,
+
+        -- bookkeeping
+        notes TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+        CONSTRAINT fk_word1 FOREIGN KEY(word_id_1) REFERENCES words(id) ON DELETE CASCADE,
+        CONSTRAINT fk_word2 FOREIGN KEY(word_id_2) REFERENCES words(id) ON DELETE CASCADE,
+
+        -- Enforce uniqueness for unordered pairs: callers should insert with smaller id first
+        UNIQUE(word_id_1, word_id_2)
+    );
+
+    -- Helpful indexes for lookups and joins
+    CREATE INDEX IF NOT EXISTS idx_word_pairs_word1 ON word_pairs(word_id_1);
+    CREATE INDEX IF NOT EXISTS idx_word_pairs_word2 ON word_pairs(word_id_2);
+    CREATE INDEX IF NOT EXISTS idx_word_pairs_score ON word_pairs(score);
+    """)
+
+    conn.commit()
+    return True
+
+
 def word_to_params(word: str, phonemes: list[str], pron_index: int, source: str = 'CMUdict-0.7b') -> tuple:
     """Return the parameter tuple for a single word insert (same order as INSERT)."""
     noun = LEMMATIZER.lemmatize(word.lower(), pos='n')
@@ -508,7 +584,12 @@ def main():
     download_wiktionary()
     
     conn = sqlite3.connect(DB_PATH)
+
+    create_phoneme_db(conn)
     create_word_db(conn)
+    create_words_unique_table(conn)
+    create_words_unique_by_lemma(conn)
+    create_word_pairs_table(conn)
 
     conn.close()
 
