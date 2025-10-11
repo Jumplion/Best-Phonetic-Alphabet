@@ -12,7 +12,7 @@ public:
     bool init();
 
     // Insert a score result
-    bool insert_score(const ScoreResult& res);
+    bool insert_score(const std::string& a, const std::string& b, float score);
 
 private:
     std::string db_path_;

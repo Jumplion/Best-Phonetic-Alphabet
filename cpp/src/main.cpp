@@ -13,12 +13,14 @@ int main(int argc, char** argv) {
     }
 
     // Demo scoring
-    auto r = score_word_pair("alpha", "alfa");
-    if (!writer.insert_score(r)) {
+    std::string word_a = "example";
+    std::string word_b = "samples";
+    float score = orthographic_jaccard_index(word_a, word_b);
+    if (!writer.insert_score(word_a, word_b, score)) {
         std::cerr << "Failed to insert score\n";
         return 1;
     }
 
-    std::cout << "Inserted score for " << r.word_a << " - " << r.word_b << " = " << r.score << "\n";
+    std::cout << "Inserted score for " << word_a << " - " << word_b << " = " << score << "\n";
     return 0;
 }

@@ -25,7 +25,7 @@ bool DBWriter::init() {
     return true;
 }
 
-bool DBWriter::insert_score(const ScoreResult& res) {
+bool DBWriter::insert_score(const std::string& a, const std::string& b, float score) {
     const char* insert_sql = "INSERT INTO word_pair_scores (word_a, word_b, score) VALUES (?, ?, ?);";
     sqlite3_stmt* stmt = nullptr;
     int rc = sqlite3_prepare_v2(impl_->db, insert_sql, -1, &stmt, nullptr);
@@ -33,9 +33,9 @@ bool DBWriter::insert_score(const ScoreResult& res) {
         std::cerr << "Failed to prepare statement: " << sqlite3_errmsg(impl_->db) << std::endl;
         return false;
     }
-    sqlite3_bind_text(stmt, 1, res.word_a.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 2, res.word_b.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_double(stmt, 3, res.score);
+    sqlite3_bind_text(stmt, 1, a.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, b.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_double(stmt, 3, score);
 
     rc = sqlite3_step(stmt);
     if (rc != SQLITE_DONE) {
