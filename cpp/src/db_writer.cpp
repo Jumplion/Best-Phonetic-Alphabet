@@ -3,6 +3,24 @@
 #include <iostream>
 #include <sstream>
 
+// ============================================================
+// Word struct implementation
+// ============================================================
+
+std::vector<std::string> Word::get_phonemes() const {
+    std::vector<std::string> phonemes;
+    std::istringstream iss(normalized_phoneme_list);
+    std::string phoneme;
+    while (iss >> phoneme) {
+        phonemes.push_back(phoneme);
+    }
+    return phonemes;
+}
+
+// ============================================================
+// DBWriter implementation
+// ============================================================
+
 struct DBWriter::Impl {
     sqlite3* db = nullptr;
 };
@@ -11,7 +29,9 @@ DBWriter::DBWriter(const std::string& db_path) : db_path_(db_path), impl_(new Im
 
 DBWriter::~DBWriter() {
     if (impl_) {
-        if (impl_->db) sqlite3_close(impl_->db);
+        if (impl_->db) {
+            sqlite3_close(impl_->db);
+        }
         delete impl_;
     }
 }
@@ -25,24 +45,49 @@ bool DBWriter::init() {
     return true;
 }
 
-bool DBWriter::insert_score(const std::string& a, const std::string& b, float score) {
-    const char* insert_sql = "INSERT INTO word_pair_scores (word_a, word_b, score) VALUES (?, ?, ?);";
-    sqlite3_stmt* stmt = nullptr;
-    int rc = sqlite3_prepare_v2(impl_->db, insert_sql, -1, &stmt, nullptr);
-    if (rc != SQLITE_OK) {
-        std::cerr << "Failed to prepare statement: " << sqlite3_errmsg(impl_->db) << std::endl;
-        return false;
+std::vector<Word> DBWriter::load_all_words() const {
+    std::vector<Word> words;
+    
+    if (!impl_ || !impl_->db) {
+        std::cerr << "DBWriter not initialized. Call init() first.\n";
+        return words;
     }
-    sqlite3_bind_text(stmt, 1, a.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 2, b.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_double(stmt, 3, score);
 
-    rc = sqlite3_step(stmt);
-    if (rc != SQLITE_DONE) {
-        std::cerr << "Failed to execute insert: " << sqlite3_errmsg(impl_->db) << std::endl;
-        sqlite3_finalize(stmt);
-        return false;
+    const char* sql = "SELECT id, word, normalized_phoneme_list FROM words ORDER BY id;";
+    sqlite3_stmt* stmt = nullptr;
+    
+    int rc = sqlite3_prepare_v2(impl_->db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Failed to prepare SQL: " << sqlite3_errmsg(impl_->db) << std::endl;
+        return words;
     }
+
+    // Reserve space for typical CMU dictionary size (~130k words)
+    words.reserve(150000);
+
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        Word w;
+        w.id = sqlite3_column_int(stmt, 0);
+        
+        const unsigned char* word_text = sqlite3_column_text(stmt, 1);
+        if (word_text) {
+            w.word = reinterpret_cast<const char*>(word_text);
+        }
+        
+        const unsigned char* phoneme_text = sqlite3_column_text(stmt, 2);
+        if (phoneme_text) {
+            w.normalized_phoneme_list = reinterpret_cast<const char*>(phoneme_text);
+        }
+        
+        words.push_back(std::move(w));
+    }
+
+    if (rc != SQLITE_DONE) {
+        std::cerr << "Error reading words: " << sqlite3_errmsg(impl_->db) << std::endl;
+    }
+
     sqlite3_finalize(stmt);
-    return true;
+    
+    std::cout << "✅ Loaded " << words.size() << " words from database.\n";
+    return words;
 }

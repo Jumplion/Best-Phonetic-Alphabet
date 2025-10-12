@@ -82,7 +82,9 @@ std::vector<std::vector<std::string>> longest_contiguous_subsequence(const std::
 }
 
 std::vector<std::vector<std::string>> longest_contiguous_subsequence(const std::string& a, const std::string& b) {
-    std::vector<std::string> vec_a(a.begin(), a.end());
-    std::vector<std::string> vec_b(b.begin(), b.end());
+    std::vector<std::string> vec_a;
+    std::vector<std::string> vec_b;
+    for (char c : a) vec_a.push_back(std::string(1, c));
+    for (char c : b) vec_b.push_back(std::string(1, c));
     return longest_contiguous_subsequence(vec_a, vec_b);
 }

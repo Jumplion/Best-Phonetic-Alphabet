@@ -423,7 +423,7 @@ def populate_words(conn):
 
     # Parse and insert CMUdict data
     with CMU_FILE.open(encoding="latin-1") as f:
-        for line in tqdm.tqdm(f, desc="Inserting CMU words", unit="word"):
+        for line in tqdm.tqdm(f, desc="Inserting CMU words...", unit=" word"):
             word, phonemes, pron_index = parse_cmudict_line(line)
 
             # Guard against static type checker warnings and malformed lines
@@ -450,7 +450,7 @@ def populate_words(conn):
 
     # Parse and insert Wiktionary data
     with WIKTIONARY_FILE.open(encoding="utf-8") as f:
-        for line in tqdm.tqdm(f, desc="Inserting Wiktionary words", unit="word"):
+        for line in tqdm.tqdm(f, desc="Inserting Wiktionary words...", unit=" word"):
             
             parsed = parse_wiktionary_jsonl(line)
             if not parsed:

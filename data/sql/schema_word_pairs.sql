@@ -10,8 +10,8 @@ CREATE TABLE IF NOT EXISTS word_pairs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
 
     -- references to words table (store with smaller id first to enforce unordered pairs)
-    word_id_1 INTEGER NOT NULL,
-    word_id_2 INTEGER NOT NULL,
+    word_1 TEXT NOT NULL,
+    word_2 TEXT NOT NULL,
 
     -- Basic distances / scores
     orth_levenshtein REAL,           -- orthographic edit distance
@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS word_pairs (
     score REAL,                      -- combined or task-specific score
 
     -- Sequence-based similarities
-    lcs INTEGER,                     -- longest common subsequence length (orthographic)
+    lcs TEXT,                     -- longest contiguous subsequence (orthographic)
 
     -- Prefix / suffix overlap (normalized ratios)
     prefix_orth_overlap REAL,
@@ -49,9 +49,6 @@ CREATE TABLE IF NOT EXISTS word_pairs (
     notes TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
-    CONSTRAINT fk_word1 FOREIGN KEY(word_id_1) REFERENCES words(id) ON DELETE CASCADE,
-    CONSTRAINT fk_word2 FOREIGN KEY(word_id_2) REFERENCES words(id) ON DELETE CASCADE,
-
     -- Enforce uniqueness for unordered pairs: callers should insert with smaller id first
-    UNIQUE(word_id_1, word_id_2)
+    UNIQUE(word_1, word_2)
 );
