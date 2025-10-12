@@ -14,6 +14,14 @@ option(SKIP_SQLITE_TOOLCHAIN_CHECK "Skip the MinGW/MSYS vs MSVC SQLite toolchain
 # Add include directory
 include_directories(${PROJECT_SOURCE_DIR}/include)
 
+# Find OpenMP for parallelization
+find_package(OpenMP)
+if(OpenMP_CXX_FOUND)
+    message(STATUS "OpenMP found: ${OpenMP_CXX_VERSION}")
+else()
+    message(WARNING "OpenMP not found. Build will be single-threaded.")
+endif()
+
 # If vcpkg/unofficial sqlite provides a CMake target, use it and create a consistent alias
 find_package(unofficial-sqlite3 CONFIG QUIET)
 if (TARGET unofficial::sqlite3::sqlite3)
