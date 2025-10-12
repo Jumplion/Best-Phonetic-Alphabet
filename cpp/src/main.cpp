@@ -42,19 +42,33 @@ int main(int argc, char** argv) {
         }
     }
 
+    // Determine batch size (support --batch-size=N flag)
+    size_t batch_size = 50000;  // Default: write every 50K pairs
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg.find("--batch-size=") == 0) {
+            batch_size = std::stoul(arg.substr(13));
+            std::cout << "📦 Batch size set to: " << batch_size << " pairs\n";
+        }
+    }
+
     // Calculate total number of pairs
     size_t total_pairs = (num_words * (num_words - 1)) / 2;
     std::cout << "Computing scores for " << total_pairs << " word pairs...\n";
 
 #ifdef _OPENMP
     int num_threads = omp_get_max_threads();
-    std::cout << "🚀 Parallel mode: using " << num_threads << " threads\n\n";
+    std::cout << "🚀 Parallel mode: using " << num_threads << " threads\n";
 #else
-    std::cout << "⚠️  Single-threaded mode (OpenMP not available)\n\n";
+    std::cout << "⚠️  Single-threaded mode (OpenMP not available)\n";
 #endif
+    std::cout << "💾 Writing to database in batches of " << batch_size << " pairs\n\n";
 
-    // Pre-allocate vector to store all computed scores
-    std::vector<WordPairScore> scores(total_pairs);
+    // Batch buffer for accumulating scores before writing
+    std::vector<WordPairScore> batch_buffer;
+    batch_buffer.reserve(batch_size);
+    std::mutex batch_mutex;
+    std::mutex db_write_mutex;  // Serialize database writes
 
     // Progress tracking
     auto start_time = std::chrono::high_resolution_clock::now();
@@ -113,8 +127,32 @@ int main(int argc, char** argv) {
             score.lcs_text = "";
         }
 
-        // Store result in pre-allocated vector (thread-safe since each thread writes to unique index)
-        scores[pair_idx] = score;
+        // IDs are already set (word_id_1, word_id_2) - no need for text fields
+
+        // Add score to batch buffer (critical section)
+        bool should_write = false;
+        std::vector<WordPairScore> write_batch;
+        {
+            std::lock_guard<std::mutex> lock(batch_mutex);
+            batch_buffer.push_back(std::move(score));
+            
+            // If batch is full, prepare to write
+            if (batch_buffer.size() >= batch_size) {
+                write_batch = std::move(batch_buffer);
+                batch_buffer.clear();
+                batch_buffer.reserve(batch_size);
+                should_write = true;
+            }
+        }
+
+        // Write batch outside critical section (serialize with mutex)
+        if (should_write) {
+            std::lock_guard<std::mutex> write_lock(db_write_mutex);
+            size_t written = writer.batch_write_scores(write_batch);
+            if (written != write_batch.size()) {
+                std::cerr << "\n⚠️  Warning: Only wrote " << written << "/" << write_batch.size() << " scores\n";
+            }
+        }
 
         // Atomic increment for progress tracking
         size_t current_count = ++pairs_computed;
@@ -136,27 +174,27 @@ int main(int argc, char** argv) {
         }
     }
 
+    // Write any remaining scores in the buffer
+    if (!batch_buffer.empty()) {
+        std::cout << "\n💾 Writing final batch of " << batch_buffer.size() << " pairs...\n";
+        std::lock_guard<std::mutex> write_lock(db_write_mutex);
+        size_t written = writer.batch_write_scores(batch_buffer);
+        if (written != batch_buffer.size()) {
+            std::cerr << "⚠️  Warning: Only wrote " << written << "/" << batch_buffer.size() << " scores\n";
+        }
+    }
+
     auto end_time = std::chrono::high_resolution_clock::now();
     auto total_duration = std::chrono::duration_cast<std::chrono::seconds>(end_time - start_time);
 
-    std::cout << "\n\n✅ Computed " << scores.size() << " word pair scores in " 
+    std::cout << "\n✅ Computed and wrote " << pairs_computed.load() << " word pair scores in " 
               << total_duration.count() << " seconds";
     
     if (total_duration.count() > 0) {
-        size_t avg_speed = scores.size() / total_duration.count();
+        size_t avg_speed = pairs_computed.load() / total_duration.count();
         std::cout << " (avg " << avg_speed << " pairs/s)";
     }
     std::cout << ".\n";
-
-    // Display sample results
-    std::cout << "\nSample scored pairs:\n";
-    for (size_t i = 0; i < std::min(size_t(5), scores.size()); ++i) {
-        const auto& s = scores[i];
-        std::cout << "  Pair [" << s.word_id_1 << ", " << s.word_id_2 << "]: "
-                  << "orth_lev=" << s.orth_levenshtein << ", "
-                  << "phon_lev=" << s.phon_levenshtein << ", "
-                  << "lcs_len=" << s.lcs_length << " (\"" << s.lcs_text << "\")\n";
-    }
 
     return 0;
 }

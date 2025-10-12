@@ -18,6 +18,8 @@ struct Word {
 struct WordPairScore {
     int word_id_1;
     int word_id_2;
+    std::string word_1;  // Actual word strings for database storage
+    std::string word_2;
     
     // Basic distance metrics
     int orth_levenshtein;
@@ -26,6 +28,28 @@ struct WordPairScore {
     // Longest contiguous subsequence (we'll store the length)
     int lcs_length;
     std::string lcs_text;  // For orthographic LCS, store the actual sequence
+};
+
+// Represents average statistics for a single word
+struct WordAverageStats {
+    int word_id;
+    
+    // Average distances
+    double avg_orth_levenshtein;
+    double avg_phon_levenshtein;
+    double avg_lcs_length;
+    
+    // Min/max for distribution
+    int min_orth_levenshtein;
+    int max_orth_levenshtein;
+    int min_phon_levenshtein;
+    int max_phon_levenshtein;
+    
+    // Count of close matches
+    int count_close_orth;  // orth_lev <= 10
+    int count_close_phon;  // phon_lev <= 10
+    
+    int computed_against_n_words;
 };
 
 class DBWriter {
@@ -39,6 +63,32 @@ public:
     // Load all words from the 'words' table into memory
     // Returns empty vector on error (check init() first)
     std::vector<Word> load_all_words() const;
+
+    // Write a batch of word pair scores to the database
+    // Uses a single transaction for efficiency
+    // Returns number of rows successfully written
+    size_t batch_write_scores(const std::vector<WordPairScore>& scores);
+
+    // Write average statistics for words to the database
+    // Returns number of rows successfully written
+    size_t batch_write_average_stats(const std::vector<WordAverageStats>& stats);
+
+    // Load words filtered by average stats criteria
+    // Returns words that meet the threshold requirements
+    std::vector<Word> load_filtered_words(
+        double max_avg_orth_lev = 20.0,
+        double max_avg_phon_lev = 15.0,
+        int min_close_matches = 5
+    ) const;
+
+    // Static method to compute average statistics for all words
+    // Computes each word's average distances against all other words
+    // Uses parallel computation for efficiency
+    static std::vector<WordAverageStats> compute_average_stats(
+        const std::vector<Word>& words,
+        int orth_close_threshold = 5,
+        int phon_close_threshold = 4
+    );
 
 private:
     std::string db_path_;

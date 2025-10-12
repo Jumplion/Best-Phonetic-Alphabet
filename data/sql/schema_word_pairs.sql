@@ -3,52 +3,44 @@
 PRAGMA foreign_keys = ON;
 PRAGMA synchronous = OFF;
 PRAGMA journal_mode = WAL;
-PRAGMA journal_mode = MEMORY;
 PRAGMA temp_store = MEMORY;
 
+-- ============================================================
+-- word_pairs table
+-- ============================================================
 CREATE TABLE IF NOT EXISTS word_pairs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    -- Use integer IDs instead of text (references words.id)
+    -- Ensures smaller id is first to enforce unordered pairs
+    word_id_1 INTEGER NOT NULL,
+    word_id_2 INTEGER NOT NULL,
 
-    -- references to words table (store with smaller id first to enforce unordered pairs)
-    word_1 TEXT NOT NULL,
-    word_2 TEXT NOT NULL,
+    -- Basic distances (INTEGER type optimizes to 1-2 bytes for small values)
+    orth_levenshtein small INTEGER NOT NULL,      -- orthographic edit distance (0-255 typical)
+    phon_levenshtein small INTEGER NOT NULL,      -- phonetic edit distance (0-255 typical)
 
-    -- Basic distances / scores
-    orth_levenshtein REAL,           -- orthographic edit distance
-    phon_levenshtein REAL,           -- phonetic edit distance (phoneme-level)
-    feature_weighted_phon_lev REAL,  -- phonetic distance weighted by feature differences
-    score REAL,                      -- combined or task-specific score
+    -- LCS length only (not the full text - can regenerate if needed)
+    lcs_length small INTEGER NOT NULL,            -- longest contiguous subsequence length
 
-    -- Sequence-based similarities
-    lcs TEXT,                     -- longest contiguous subsequence (orthographic)
+    -- Primary key on the pair
+    -- Composite key acts as the table's storage key due to WITHOUT ROWID
+    PRIMARY KEY (word_id_1, word_id_2),
+    
+    -- Foreign key constraints to words table
+    FOREIGN KEY(word_id_1) REFERENCES words(id) ON DELETE CASCADE,
+    FOREIGN KEY(word_id_2) REFERENCES words(id) ON DELETE CASCADE
+) WITHOUT ROWID;  -- Further optimization: eliminates rowid overhead
 
-    -- Prefix / suffix overlap (normalized ratios)
-    prefix_orth_overlap REAL,
-    suffix_orth_overlap REAL,
-    prefix_phon_overlap REAL,
-    suffix_phon_overlap REAL,
+-- Optional: Index for reverse lookups (uncomment if needed)
+-- CREATE INDEX IF NOT EXISTS idx_word_pairs_reverse ON word_pairs(word_id_2, word_id_1);
 
-    -- n-gram overlap metrics (scalar) and flexible JSON for detailed counts
-    phoneme_bigram_jaccard REAL,
-    phoneme_trigram_jaccard REAL,
-    phoneme_ngram_overlap JSON,
-
-    -- Rhyme / prosody features
-    rhyme_similarity REAL,
-    stress_pattern_similarity REAL,
-    syllabic_structure_match INTEGER,
-
-    -- Path / transition and neighborhood features
-    phonetic_path_smoothness REAL,
-    neighborhood_density_diff REAL,
-
-    -- Generic set similarity (can be used for grapheme/phoneme sets)
-    jaccard_index REAL,
-
-    -- bookkeeping
-    notes TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-
-    -- Enforce uniqueness for unordered pairs: callers should insert with smaller id first
-    UNIQUE(word_1, word_2)
-);
+-- ============================================================
+-- FUTURE COLUMNS (to be added when computed):
+-- ============================================================
+-- When adding new metrics, consider using ALTER TABLE to add columns
+-- rather than recreating the table. Examples:
+--
+-- ALTER TABLE word_pairs ADD COLUMN feature_weighted_phon_lev REAL;
+-- ALTER TABLE word_pairs ADD COLUMN prefix_orth_overlap REAL;
+-- ALTER TABLE word_pairs ADD COLUMN phoneme_bigram_jaccard REAL;
+-- etc.
+-- ============================================================
