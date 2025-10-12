@@ -1,25 +1,17 @@
 import os
-import csv
 import logging
 import json
 import string
-import time
 from collections import defaultdict
 
 # Scientific and Data Libraries
 import numpy as np
-import pandas as pd
 from tqdm import tqdm
 
 # NLP Libraries
 import nltk
 from nltk.corpus import cmudict, wordnet
 from nltk.stem import WordNetLemmatizer
-
-import sqlite3
-from datetime import datetime
-
-from scoring import (candidate_gen, normalize_phoneme, _score_candidate)
 
 # Constants and Settings
 LETTERS = list(string.ascii_uppercase)

@@ -205,3 +205,4 @@ cmudict-0.7b
 *.db
 *.db.bak
 data/enWikiDump.jsonl
+data/word dumps/enWikiDump.jsonl

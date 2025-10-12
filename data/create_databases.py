@@ -12,10 +12,16 @@ from g2p_en import G2p
 # Configuration
 # ============================================================
 DB_PATH = "BestPhonetics.db"
+
+SQL_SCHEMA_PHONEMES = Path(__file__).resolve().parent / 'sql/schema_phonemes.sql'
+SQL_SCHEMA_WORDS = Path(__file__).resolve().parent / 'sql/schema_words.sql'
+SQL_SCHEMA_WORD_PAIRS = Path(__file__).resolve().parent / 'sql/schema_word_pairs.sql'
+
+CMU_FILE = Path("word dumps/cmudict-0.7b")
 CMU_URL = "https://svn.code.sf.net/p/cmusphinx/code/trunk/cmudict/cmudict-0.7b"
+
+WIKTIONARY_FILE = Path("word dumps/enWikiDump.jsonl")
 WIKTIONARY_URL = "https://dumps.wikimedia.org/enwiktionary/latest/enwiktionary-latest-pages-articles.xml.bz2"
-CMU_FILE = Path("cmudict-0.7b")
-WIKTIONARY_FILE = Path("enwiktionary-latest-pages-articles.xml.bz2")
 
 # Single lemmatizer instance (expensive to create repeatedly)
 LEMMATIZER = WordNetLemmatizer()
@@ -32,22 +38,22 @@ PHONEMES: dict[str, tuple[float, float, float, float]] = {
         #   0 = Low [Open], 0.5 = Mid, 1 = High [Close]
         #   0 = Front,  0.5 = Central, 1 = Back
         #   0 = Rounded, 1 = Unrounded
-        "AA":  (0,      0,    1,     0),    # ɑ             father
-        "AE":  (0,      0,    0,     0),    # æ             cat
-        "AH":  (0,      0.5,  0.5,   0),    # ʌ or ə        cut
-        "AO":  (0,      0.5,  1,     1),    # ɔ`            caught
-        "AW":  (0,      0.5,  0.75,  1),    # aʊ            cow
-        "AX":  (0,      0.5,  0.5,   0),    # ə (schwa)     about
-        "AY":  (0,      0.5,  0.5,   0),    # aɪ            my
-        "EY":  (0,      0.65, 0,     0),    # e             they
-        "EH":  (0,      0.5,  0,     0),    # ɛ             bed
-        "ER":  (0,      0.5,  0.5,   0),    # ɚ or ɝ        her
-        "IY":  (0,      1,    0,     0),    # i             see
-        "IH":  (0,      0.85, 0,     0),    # ɪ             sit
-        "OW":  (0,      0.65, 1,     1),    # o             go
-        "OY":  (0,      0.5,  0.5,   0.5),  # ɔɪ            toy
-        "UW":  (0,      1,    1,     1),    # u             too
-        "UH":  (0,      0.85, 1,     1),    # ʊ             put
+        "AA":  (1,      0,    1,     0),    # ɑ             father
+        "AE":  (1,      0,    0,     0),    # æ             cat
+        "AH":  (1,      0.5,  0.5,   0),    # ʌ or ə        cut
+        "AO":  (1,      0.5,  1,     1),    # ɔ`            caught
+        "AW":  (1,      0.5,  0.75,  1),    # aʊ            cow
+        "AX":  (1,      0.5,  0.5,   0),    # ə (schwa)     about
+        "AY":  (1,      0.5,  0.5,   0),    # aɪ            my
+        "EY":  (1,      0.65, 0,     0),    # e             they
+        "EH":  (1,      0.5,  0,     0),    # ɛ             bed
+        "ER":  (1,      0.5,  0.5,   0),    # ɚ or ɝ        her
+        "IY":  (1,      1,    0,     0),    # i             see
+        "IH":  (1,      0.85, 0,     0),    # ɪ             sit
+        "OW":  (1,      0.65, 1,     1),    # o             go
+        "OY":  (1,      0.5,  0.5,   0.5),  # ɔɪ            toy
+        "UW":  (1,      1,    1,     1),    # u             too
+        "UH":  (1,      0.85, 1,     1),    # ʊ             put
 
             # CONSONANTS
         # Consonant | Place of Articulation | Manner of Articulation | Voiced/Unvoiced
@@ -56,45 +62,91 @@ PHONEMES: dict[str, tuple[float, float, float, float]] = {
         # 0 = Voiceless, 1 = Voiced
         
         # Stops
-        "P":  (1, 0,    0,      0),  # voiceless bilabial stop              pat
-        "B":  (1, 0,    0,      1),  # voiced bilabial stop                 bat
-        "D":  (1, 0.4,  0,      1),  # voiced alveolar stop                 dog
-        "T":  (1, 0.4,  0,      0),  # voiceless alveolar stop              top
-        "K":  (1, 0.8,  0,      0),  # voiceless velar stop                 cat
-        "G":  (1, 0.8,  0,      1),  # voiced velar stop                    go
+        "P":  (0, 0,    0,      0),  # voiceless bilabial stop              pat
+        "B":  (0, 0,    0,      1),  # voiced bilabial stop                 bat
+        "D":  (0, 0.4,  0,      1),  # voiced alveolar stop                 dog
+        "T":  (0, 0.4,  0,      0),  # voiceless alveolar stop              top
+        "K":  (0, 0.8,  0,      0),  # voiceless velar stop                 cat
+        "G":  (0, 0.8,  0,      1),  # voiced velar stop                    go
         
         # Affricates
-        "CH": (1, 0.6,  0.125,  0),  # voiceless postalveolar affricate     chip
-        "JH": (1, 0.6,  0.125,  1),  # voiced postalveolar affricate        judge
+        "CH": (0, 0.6,  0.125,  0),  # voiceless postalveolar affricate     chip
+        "JH": (0, 0.6,  0.125,  1),  # voiced postalveolar affricate        judge
 
         # Fricatives
-        "F":  (1, 0.2,  0.25,   0),  # voiceless labiodental fricative      fish
-        "V":  (1, 0.2,  0.25,   1),  # voiced labiodental fricative         van
-        "TH": (1, 0.4,  0.25,   0),  # voiceless dental fricative           thin
-        "DH": (1, 0.4,  0.25,   1),  # voiced dental fricative              then
-        "S":  (1, 0.4,  0.25,   0),  # voiceless alveolar fricative         see
-        "Z":  (1, 0.4,  0.25,   1),  # voiced alveolar fricative            zoo
-        "SH": (1, 0.6,  0.25,   0),  # voiceless postalveolar fricative     she
-        "ZH": (1, 0.6,  0.25,   1),  # voiced postalveolar fricative        measure
-        "HH": (1, 1,    0.25,   0),  # voiceless glottal fricative          he
+        "F":  (0, 0.2,  0.25,   0),  # voiceless labiodental fricative      fish
+        "V":  (0, 0.2,  0.25,   1),  # voiced labiodental fricative         van
+        "TH": (0, 0.4,  0.25,   0),  # voiceless dental fricative           thin
+        "DH": (0, 0.4,  0.25,   1),  # voiced dental fricative              then
+        "S":  (0, 0.4,  0.25,   0),  # voiceless alveolar fricative         see
+        "Z":  (0, 0.4,  0.25,   1),  # voiced alveolar fricative            zoo
+        "SH": (0, 0.6,  0.25,   0),  # voiceless postalveolar fricative     she
+        "ZH": (0, 0.6,  0.25,   1),  # voiced postalveolar fricative        measure
+        "HH": (0, 1,    0.25,   0),  # voiceless glottal fricative          he
 
         # Nasals
-        "M":  (1, 0,    0.5,    1),  # bilabial nasal                       me
-        "N":  (1, 0.4,  0.5,    1),  # alveolar nasal                       no
-        "NG": (1, 0.8,  0.5,    1),  # velar nasal                          sing
+        "M":  (0, 0,    0.5,    1),  # bilabial nasal                       me
+        "N":  (0, 0.4,  0.5,    1),  # alveolar nasal                       no
+        "NG": (0, 0.8,  0.5,    1),  # velar nasal                          sing
 
         # Liquids
-        "L":  (1, 0.4,  0.75,   1),  # alveolar lateral liquid              leaf    
-        "R":  (1, 0.4,  0.875,  1),  # alveolar rhotic liquid               red
+        "L":  (0, 0.4,  0.75,   1),  # alveolar lateral liquid              leaf    
+        "R":  (0, 0.4,  0.875,  1),  # alveolar rhotic liquid               red
 
         # Glides (approximants)
-        "Y":  (1, 0.6,  1,      1),  # palatal glide    (IPA: /j/)          yes
-        "W":  (1, 0,    1,      1)   # bilabial glide   (IPA: /w/)          we
+        "Y":  (0, 0.6,  1,      1),  # palatal glide    (IPA: /j/)          yes
+        "W":  (0, 0,    1,      1)   # bilabial glide   (IPA: /w/)          we
     }
 
+""" Orthographic letter prefixes that are banned. These are often silent letters at the start of words."""
+BANNED_LETTER_PREFIXES: list[str] = [
+    "eu",
+    "gn",
+    "kn",
+    "mn",
+    "ph",
+    "pn",
+    "ps",
+    "sh",
+    "th",
+    "wr"
+]
+
+""" Phoneme Prefixes that are banned from certain letter groups.
+For example, "E" words shouldn't start with a "y" sound like "eunuch" or "euphoria"
+"""
+BANNED_PHONEME_PREFIXES: dict[str, list[str]] = {
+    "a" : [],
+    "b" : [],
+    "c" : ["S"],        # "cereal", "cell"
+    "d" : [],
+    "e" : ["ER", "Y"],  # "ernest" | "eunuch", "euphoria"
+    "f" : [],
+    "g" : ["N"],        # "gnome"
+    "h" : ["AW", "OW"], # "hour"
+    "i" : [],
+    "j" : [],
+    "k" : ["N"],        # "knight"
+    "l" : [],
+    "m" : ["N"],        # "mnemonic"
+    "n" : [],
+    "o" : [],
+    "p" : ["F"],        # "phone", "philosophy"
+    "q" : [],
+    "r" : [],
+    "s" : ["SH"],       # "she", "sure"
+    "t" : ["TH", "DH"], # "this" | "that"
+    "u" : [],
+    "v" : [],    
+    "w" : ["R", "HH"],  # 'wrestle' | 'whole'
+    "x" : [],
+    "y" : [],
+    "z" : []
+}
+
 # ARPAbet vowel phonemes (with stress)
-VOWELS: list[str] = [k for k, v in PHONEMES.items() if v[0] == 0]
-CONSONANTS: list[str] = [k for k, v in PHONEMES.items() if v[0] == 1]
+VOWELS: list[str] = [k for k, v in PHONEMES.items() if v[0] == 1]
+CONSONANTS: list[str] = [k for k, v in PHONEMES.items() if v[0] == 0]
 # For O(1) membership checks when counting syllables etc.
 VOWEL_SET: set[str] = set(VOWELS)
 
@@ -125,32 +177,24 @@ IPA_PATTERN = re.compile("|".join(map(re.escape, IPA_TOKENS)))
 g2p = G2p()
 
 # ============================================================
-# Utility Functions
+# Download Functions
 # ============================================================
 
-def download_cmudict():
-    """Downloads the CMU dictionary if not present locally."""
-    if CMU_FILE.exists():
-        print("✅ CMU Dictionary already downloaded.")
+def download_wordDump(url, outputFile):
+    """Downloads a word dump from the given URL if not present locally."""
+    if outputFile.exists():
+        print(f"✅ {outputFile.name} already downloaded.")
         return
-    print("⬇️ Downloading CMU Dictionary...")
-    with urllib.request.urlopen(CMU_URL) as resp:
+    print(f"⬇️ Downloading {outputFile.name}...")
+    with urllib.request.urlopen(url) as resp:
         data = resp.read()
-    CMU_FILE.write_bytes(data)
+    outputFile.write_bytes(data)
     print("✅ Download complete.")
 
 
-def download_wiktionary():
-    """Downloads the Wiktionary dump if not present locally."""
-    if WIKTIONARY_FILE.exists():
-        print("✅ Wiktionary dump already downloaded.")
-        return
-    print("⬇️ Downloading Wiktionary dump...")
-    with urllib.request.urlopen(WIKTIONARY_URL) as resp:
-        data = resp.read()
-    WIKTIONARY_FILE.write_bytes(data)
-    print("✅ Download complete.")
-
+# ============================================================
+# Phoneme and Word Helpers
+# ============================================================
 
 def is_vowel_phoneme(ph):
     """Check if a phoneme (e.g. AH0) is a vowel."""
@@ -229,23 +273,9 @@ def ipa_to_arpabet(ipa_str: str) -> str:
 
 
 # ============================================================
-# Database Setup
-# ============================================================
-
-def run_sql_file(conn, sql_path: Path):
-    """Execute a .sql schema file on the given sqlite3 connection."""
-    if not sql_path.exists():
-        print(f"ℹ️ SQL file not found: {sql_path}")
-        return False
-    sql_text = sql_path.read_text(encoding="utf-8")
-    conn.executescript(sql_text)
-    conn.commit()
-    print(f"✅ Executed SQL schema from {sql_path}")
-    return True
-
-# ============================================================
 # CMU Parsing & Insertion
 # ============================================================
+
 
 def parse_cmudict_line(line):
     """Parse a CMU line like: WORD(1)  W ER1 D"""
@@ -295,13 +325,29 @@ def parse_wiktionary_jsonl(line: str) -> typing.Optional[tuple[str, list[str]]]:
     return word, arpabet_variants
 
 
-def create_phoneme_db(conn):
+# ============================================================
+# Database Setup
+# ============================================================
+
+def run_sql_file(conn, sql_path: Path):
+    """Execute a .sql schema file on the given sqlite3 connection."""
+    if not sql_path.exists():
+        print(f"ℹ️ SQL file not found: {sql_path}")
+        return False
+    sql_text = sql_path.read_text(encoding="utf-8")
+    conn.executescript(sql_text)
+    conn.commit()
+    print(f"✅ Executed SQL schema from {sql_path}")
+    return True
+
+
+def populate_phonemes(conn):
     phoneme_params = []
     for ph, features in tqdm.tqdm(PHONEMES.items(), desc="Inserting phonemes", unit="phoneme", mininterval=5, ncols=80, smoothing=0.1):
         phoneme_params.append(
             (
                 ph,
-                1 if features[0] else 0,
+                1 if ph in VOWEL_SET else 0,
                 features[1] if ph in VOWEL_SET else None,
                 features[2] if ph in VOWEL_SET else None,
                 features[3] if ph in VOWEL_SET else None,
@@ -323,10 +369,38 @@ def create_phoneme_db(conn):
     print(f"✅ Finished inserting {len(PHONEMES)} phonemes.")
 
 
-def create_word_db(conn):
+def populate_phoneme_distances(conn):
+    """Precompute and populate phoneme_distances table with pairwise distances."""
+    phonemes = list(PHONEMES.keys())
+    distance_params = []
+    for i, ph1 in enumerate(tqdm.tqdm(phonemes, desc="Computing phoneme distances", unit="phoneme", mininterval=5, ncols=80, smoothing=0.1)):
+        vec1 = np.array(PHONEMES[ph1])
+
+        empty_vec = np.zeros(4)
+        feature_dist_empty = np.linalg.norm(vec1 - empty_vec)
+        audio_dist_empty = 0.0
+        distance_params.append((ph1, "", feature_dist_empty, audio_dist_empty))
+
+        for j in range(i, len(phonemes)):
+            ph2 = phonemes[j]
+            vec2 = np.array(PHONEMES[ph2])
+            feature_dist = np.linalg.norm(vec1 - vec2)
+            audio_dist = 0.0    # Placeholder for future audio-based distance
+
+            distance_params.append((ph1, ph2, feature_dist, audio_dist))
+
+    conn.executemany("""
+        INSERT INTO phoneme_distances (phoneme_1, phoneme_2, feature_based_distance, audio_based_distance)
+        VALUES (?, ?, ?, ?)
+    """, distance_params)
+    conn.commit()
+    print(f"✅ Finished inserting {len(distance_params)} phoneme distances.")
+
+
+def populate_words(conn):
     insert_sql = """
         INSERT INTO words (
-            word, lemma, cmu_pron_index,
+            word, lemma, pronunciation_index,
             phoneme_list, normalized_phoneme_list,
             phoneme_count, unique_phoneme_count, 
             num_syllables, primary_stress_index, stress_pattern,
@@ -338,53 +412,73 @@ def create_word_db(conn):
             avg_consonant_voicing, avg_consonant_place, avg_consonant_manner,
             sonority_profile, sonority_rise_count, sonority_fall_count,
             word_frequency, phonotactic_probability, source
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
 
     # Calculate their stats and whatnot as well
 
     batch: list[tuple] = []
+    wordSeen = {} # Count of how many times we've seen a word (for alternate pronunciations)
     total = 0
 
     # Parse and insert CMUdict data
     with CMU_FILE.open(encoding="latin-1") as f:
-        for line in tqdm.tqdm(f, desc="Inserting words", unit="word", mininterval=5, ncols=80, smoothing=0.1):
+        for line in tqdm.tqdm(f, desc="Inserting CMU words", unit="word"):
             word, phonemes, pron_index = parse_cmudict_line(line)
+
             # Guard against static type checker warnings and malformed lines
             if not word or phonemes is None:
                 continue
-            if pron_index is None:
-                pron_index = 0
-            params = word_to_params(word, phonemes, pron_index, source='CMUdict-0.7b')
-            batch.append(params)
 
-            if len(batch) >= BATCH_SIZE:
-                conn.executemany(insert_sql, batch)
-                conn.commit()
-                total += len(batch)
-                print(f"Inserted {total} words...")
-                batch.clear()
-
-    # Parse and insert Wiktionary data
-    with WIKTIONARY_FILE.open(encoding="utf-8") as f:
-        batch = []
-        total = 0
-        for line in tqdm.tqdm(f, desc="Inserting Wiktionary words", unit="word", mininterval=5, ncols=80, smoothing=0.1):
-            parsed = parse_wiktionary_jsonl(line)
-            if not parsed:
+            if word in wordSeen.keys():
                 continue
-            word, arpabet_variants = parsed
-            for pron_index, arpabet in enumerate(arpabet_variants):
-                phonemes = arpabet.split()
-                params = word_to_params(word, phonemes, pron_index, source='Wiktionary')
+            else:
+                wordSeen[word] = True
+
+            pron_index = 0
+            params = word_to_params(word, phonemes, pron_index, source='CMUdict-0.7b')
+            if params != tuple():  # Skip invalid words
                 batch.append(params)
 
             if len(batch) >= BATCH_SIZE:
                 conn.executemany(insert_sql, batch)
                 conn.commit()
                 total += len(batch)
-                print(f"Inserted {total} words...")
                 batch.clear()
+
+    print(f"Inserted {total} words from CMUdict.")
+
+    # Parse and insert Wiktionary data
+    with WIKTIONARY_FILE.open(encoding="utf-8") as f:
+        for line in tqdm.tqdm(f, desc="Inserting Wiktionary words", unit="word"):
+            
+            parsed = parse_wiktionary_jsonl(line)
+            if not parsed:
+                continue
+            word, arpabet_variants = parsed
+
+            for pron_index, arpabet in enumerate(arpabet_variants):
+                
+                if word in wordSeen.keys():
+                    continue
+                else:
+                    wordSeen[word] = True
+
+                phonemes = arpabet.split()
+
+                p_index = 0
+                params = word_to_params(word, phonemes, p_index, source='Wiktionary')
+
+                if params != tuple():  # Skip invalid words
+                    batch.append(params)
+
+            if len(batch) >= BATCH_SIZE:
+                conn.executemany(insert_sql, batch)
+                conn.commit()
+                total += len(batch)
+                batch.clear()
+
+    print(f"Inserted {total} words from Wiktionary.")
 
     # Insert any remaining rows
     if batch:
@@ -394,143 +488,44 @@ def create_word_db(conn):
         print(f"Inserted {total} words (final).")
 
 
-def create_words_unique_table(conn):
-    cur = conn.cursor()
-    # Create the words_unique table
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS words_unique (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            word TEXT NOT NULL,
-            representative_word_id INTEGER NOT NULL,
-            FOREIGN KEY(representative_word_id) REFERENCES words(id) ON DELETE CASCADE
-        )
-    """)
-    conn.commit()
-
-    # Populate: choose the representative as the row with the smallest id for each lower(word)
-    cur.execute("SELECT COUNT(*) FROM words_unique")
-    existing = cur.fetchone()[0]
-    if existing > 0:
-        print(f"words_unique already populated ({existing} rows). Skipping population.")
-        return existing
-
-    cur.execute("INSERT INTO words_unique(word, representative_word_id) SELECT lower(word) as lw, MIN(id) FROM words GROUP BY lw")
-    conn.commit()
-    cur.execute("SELECT COUNT(*) FROM words_unique")
-    return cur.fetchone()[0]
-
-
-def create_words_unique_by_lemma(conn):
-    cur = conn.cursor()
-    # Create the words_unique table
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS words_unique_by_lemma (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            lemma TEXT NOT NULL,
-            representative_word_id INTEGER NOT NULL,
-            FOREIGN KEY(representative_word_id) REFERENCES words(id) ON DELETE CASCADE
-        )
-    """)
-    conn.commit()
-
-    # Populate: choose the representative as the row with the smallest id for each lower(lemma)
-    cur.execute("SELECT COUNT(*) FROM words_unique_by_lemma")
-    existing = cur.fetchone()[0]
-    if existing > 0:
-        print(f"words_unique_by_lemma already populated ({existing} rows). Skipping population.")
-        return existing
-
-    cur.execute("INSERT INTO words_unique_by_lemma(lemma, representative_word_id) SELECT lower(lemma) as ll, MIN(id) FROM words WHERE lemma IS NOT NULL GROUP BY ll")
-    conn.commit()
-    cur.execute("SELECT COUNT(*) FROM words_unique_by_lemma")
-    return cur.fetchone()[0]
-
-
-def create_word_pairs_table(conn: sqlite3.Connection):
-    """Create the `word_pairs` table used to store pairwise word comparisons.
-
-    Design notes:
-    - Each row represents one (unordered) pair of words from the `words` table.
-    - The application should insert pairs with (word_id_1 < word_id_2) to avoid
-      duplicates; a UNIQUE constraint enforces this at the DB level.
-    - Related features are grouped and some higher-cardinality comparisons
-      (e.g. n-gram overlaps) are stored both as scalar metrics and as a JSON
-      column for flexibility.
-    """
-    cur = conn.cursor()
-
-    cur.executescript("""
-    PRAGMA foreign_keys = ON;
-
-    CREATE TABLE IF NOT EXISTS word_pairs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-
-        -- references to words table (store with smaller id first to enforce unordered pairs)
-        word_id_1 INTEGER NOT NULL,
-        word_id_2 INTEGER NOT NULL,
-
-        -- Basic distances / scores
-        orth_levenshtein REAL,           -- orthographic edit distance
-        phon_levenshtein REAL,           -- phonetic edit distance (phoneme-level)
-        feature_weighted_phon_lev REAL,  -- phonetic distance weighted by feature differences
-        score REAL,                      -- combined or task-specific score
-
-        -- Sequence-based similarities
-        lcs INTEGER,                     -- longest common subsequence length (orthographic)
-
-        -- Prefix / suffix overlap (normalized ratios)
-        prefix_orth_overlap REAL,
-        suffix_orth_overlap REAL,
-        prefix_phon_overlap REAL,
-        suffix_phon_overlap REAL,
-
-        -- n-gram overlap metrics (scalar) and flexible JSON for detailed counts
-        phoneme_bigram_jaccard REAL,
-        phoneme_trigram_jaccard REAL,
-        phoneme_ngram_overlap JSON,
-
-        -- Rhyme / prosody features
-        rhyme_similarity REAL,
-        stress_pattern_similarity REAL,
-        syllabic_structure_match INTEGER,
-
-        -- Path / transition and neighborhood features
-        phonetic_path_smoothness REAL,
-        neighborhood_density_diff REAL,
-
-        -- Generic set similarity (can be used for grapheme/phoneme sets)
-        jaccard_index REAL,
-
-        -- bookkeeping
-        notes TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-
-        CONSTRAINT fk_word1 FOREIGN KEY(word_id_1) REFERENCES words(id) ON DELETE CASCADE,
-        CONSTRAINT fk_word2 FOREIGN KEY(word_id_2) REFERENCES words(id) ON DELETE CASCADE,
-
-        -- Enforce uniqueness for unordered pairs: callers should insert with smaller id first
-        UNIQUE(word_id_1, word_id_2)
-    );
-
-    -- Helpful indexes for lookups and joins
-    CREATE INDEX IF NOT EXISTS idx_word_pairs_word1 ON word_pairs(word_id_1);
-    CREATE INDEX IF NOT EXISTS idx_word_pairs_word2 ON word_pairs(word_id_2);
-    CREATE INDEX IF NOT EXISTS idx_word_pairs_score ON word_pairs(score);
-    """)
-
-    conn.commit()
-    return True
-
-
 def word_to_params(word: str, phonemes: list[str], pron_index: int, source: str = 'CMUdict-0.7b') -> tuple:
     """Return the parameter tuple for a single word insert (same order as INSERT)."""
-    noun = LEMMATIZER.lemmatize(word.lower(), pos='n')
-    lemma = LEMMATIZER.lemmatize(noun, pos='v')
+    
+    # Basic validation
+    # If the word contains any non alphabetical characters. (Allow only A-Z and a-z)
+    if not re.match(r"^[A-Za-z]+$", word):
+        return tuple()
+    # If the word is too short or too long...
+    if len(word) < 3 or len(word) > 10:
+        return tuple()
+    # If the word consists of all the same letter...
+    if all(c.lower() == word[0].lower() for c in word):
+        return tuple()
+    # If the word starts with a banned letter combination...
+    if any(word.lower().startswith(prefix) for prefix in BANNED_LETTER_PREFIXES):
+        return tuple()
+    # If the word starts with a letter, and its phoneme list starts with a banned phoneme...
+    if word[0].lower() in BANNED_PHONEME_PREFIXES:
+        banned_prefixes = BANNED_PHONEME_PREFIXES[word[0].lower()]
+        if phonemes and any(phonemes[0].startswith(bp) for bp in banned_prefixes):
+            return tuple()
+    # If the phoneme list is empty or less than 2 phonemes...
+    if not phonemes or len(phonemes) < 2:
+        return tuple()
+
+    syllables = count_syllables(phonemes)
+    # If the syllable count is outside 1-4 range...
+    if syllables < 2 or syllables > 4:
+        return tuple()
+    
+    possibleLemmas = []
+    for pos in ['n', 'v', 'a', 'r']:
+        possibleLemmas.append(LEMMATIZER.lemmatize(word.lower(), pos=pos))
+        possibleLemmas.append(LEMMATIZER.lemmatize(possibleLemmas[-1], pos=pos))
 
     norm_phonemes = normalize_phoneme_list(phonemes)
     phoneme_count = len(phonemes)
     unique_phoneme_count = len(set(norm_phonemes))
-    syllables = count_syllables(phonemes)
 
     orth_v, orth_c = orth_vowel_consonant_counts(word)
     phon_v, phon_c = phon_vowel_consonant_counts(phonemes)
@@ -560,7 +555,7 @@ def word_to_params(word: str, phonemes: list[str], pron_index: int, source: str 
     phonotactic_probability = None
 
     return (
-        word, lemma, pron_index,
+        word.lower(), min(possibleLemmas, key=len), pron_index,
         " ".join(phonemes), " ".join(norm_phonemes),
         phoneme_count, unique_phoneme_count,
         syllables, primary_stress_index, stress_pattern,
@@ -580,16 +575,39 @@ def word_to_params(word: str, phonemes: list[str], pron_index: int, source: str 
 def main():
     print("🛠️  Populating the BestPhonetics database...")
     
-    download_cmudict()
-    download_wiktionary()
+    # download_wordDump(CMU_URL, CMU_FILE)
+    # download_wordDump(WIKTIONARY_URL, WIKTIONARY_FILE)
     
     conn = sqlite3.connect(DB_PATH)
+    print("✅ Connected to database.")
 
-    create_phoneme_db(conn)
-    create_word_db(conn)
-    create_words_unique_table(conn)
-    create_words_unique_by_lemma(conn)
-    create_word_pairs_table(conn)
+    print("🗂️  Setting up database schema...")
+    run_sql_file(conn, SQL_SCHEMA_PHONEMES)
+    run_sql_file(conn, SQL_SCHEMA_WORDS)
+    run_sql_file(conn, SQL_SCHEMA_WORD_PAIRS)
+
+    print("Populating phonemes...")
+    populate_phonemes(conn)
+
+    print("Populating phoneme distances...")
+    populate_phoneme_distances(conn)
+
+    print("Populating words...")
+    populate_words(conn)
+
+    # After populating, one last cleanup step.
+    # Group by lemma
+    # Choose representative word for each lemma (shortest spelling, lowest pronunciation_index), remove the rest
+    print("Cleaning up duplicates by lemma...")
+    cleanup_sql = """
+        DELETE FROM words
+        WHERE rowid NOT IN (
+            SELECT MIN(rowid) FROM words
+            GROUP BY lemma, pronunciation_index
+        );
+    """
+    conn.execute(cleanup_sql)
+    conn.commit()
 
     conn.close()
 
