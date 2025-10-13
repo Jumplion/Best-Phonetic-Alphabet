@@ -24,22 +24,18 @@ CREATE TABLE IF NOT EXISTS average_stats (
     avg_phon_levenshtein REAL NOT NULL,     -- avg phonetic distance vs all other words
     avg_lcs_length REAL NOT NULL,           -- avg longest common subsequence length
     
-    -- Distribution statistics (optional but useful for filtering)
-    min_orth_levenshtein small INTEGER,           -- closest orthographic match
-    max_orth_levenshtein small INTEGER,           -- furthest orthographic match
+    -- Distribution statistics (for filtering)
+    min_orth_levenshtein INTEGER,           -- closest orthographic match
+    max_orth_levenshtein INTEGER,           -- furthest orthographic match
     stddev_orth_levenshtein REAL,           -- standard deviation (measures consistency)
     
-    min_phon_levenshtein small INTEGER,           -- closest phonetic match
-    max_phon_levenshtein small INTEGER,           -- furthest phonetic match
-    stddev_phon_levenshtein REAL,
+    min_phon_levenshtein INTEGER,           -- closest phonetic match
+    max_phon_levenshtein INTEGER,           -- furthest phonetic match
+    stddev_phon_levenshtein REAL,           -- standard deviation (measures consistency)
     
     -- Count of "good matches" (words within threshold)
-    count_close_orth small INTEGER,               -- count where orth_lev <= 10
-    count_close_phon small INTEGER,               -- count where phon_lev <= 10
-    
-    -- Metadata
-    computed_against_n_words INTEGER,       -- how many words were compared
-    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    count_close_orth INTEGER,               -- count where orth_lev <= 5
+    count_close_phon INTEGER,               -- count where phon_lev <= 4
     
     FOREIGN KEY(word_id) REFERENCES words(id) ON DELETE CASCADE
 );

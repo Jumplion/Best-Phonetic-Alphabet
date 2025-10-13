@@ -39,17 +39,18 @@ struct WordAverageStats {
     double avg_phon_levenshtein;
     double avg_lcs_length;
     
-    // Min/max for distribution
+    // Distribution statistics
     int min_orth_levenshtein;
     int max_orth_levenshtein;
+    double stddev_orth_levenshtein;
+    
     int min_phon_levenshtein;
     int max_phon_levenshtein;
+    double stddev_phon_levenshtein;
     
     // Count of close matches
-    int count_close_orth;  // orth_lev <= 10
-    int count_close_phon;  // phon_lev <= 10
-    
-    int computed_against_n_words;
+    int count_close_orth;  // orth_lev <= 5
+    int count_close_phon;  // phon_lev <= 4
 };
 
 class DBWriter {
@@ -80,15 +81,6 @@ public:
         double max_avg_phon_lev = 15.0,
         int min_close_matches = 5
     ) const;
-
-    // Static method to compute average statistics for all words
-    // Computes each word's average distances against all other words
-    // Uses parallel computation for efficiency
-    static std::vector<WordAverageStats> compute_average_stats(
-        const std::vector<Word>& words,
-        int orth_close_threshold = 5,
-        int phon_close_threshold = 4
-    );
 
     // Compute and write average statistics in batches
     // Processes words in chunks, writing results as we go to prevent memory overflow
