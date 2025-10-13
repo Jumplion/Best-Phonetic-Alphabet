@@ -6,7 +6,7 @@ int main(int argc, char* argv[]) {
     const std::string db_path = "f:/Repos/Best Phonetic Alphabet/data/BestPhonetics.db";
     
     // Parse command line arguments
-    int test_n = 100; // Default to 100 words
+    int test_n = -1; // Default to -1 (all words)
     if (argc > 1) {
         test_n = std::atoi(argv[1]);
     }
@@ -14,8 +14,7 @@ int main(int argc, char* argv[]) {
     std::cout << "=================================================\n";
     std::cout << "Average Statistics Computation Test\n";
     std::cout << "=================================================\n";
-    std::cout << "Testing with first " << test_n << " words\n\n";
-
+    
     // Initialize database
     DBWriter db_writer(db_path);
     if (!db_writer.init()) {
@@ -35,46 +34,20 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Limit to test_n words
-    if (all_words.size() > static_cast<size_t>(test_n)) {
+    // Limit to test_n words if specified
+    if (test_n > 0 && all_words.size() > static_cast<size_t>(test_n)) {
         all_words.resize(test_n);
         std::cout << "Limited to first " << test_n << " words for testing.\n\n";
+    } else if (test_n <= 0) {
+        std::cout << "Computing statistics for ALL " << all_words.size() << " words in database.\n\n";
     }
 
-    // Compute average statistics
-    std::cout << "Computing average statistics...\n";
-    start = std::chrono::high_resolution_clock::now();
-    auto stats = DBWriter::compute_average_stats(all_words, 5, 4);
-    end = std::chrono::high_resolution_clock::now();
-    auto compute_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-    std::cout << "⏱️  Computation took " << compute_ms << " ms\n\n";
-
-    // Display a few sample statistics
-    std::cout << "\nSample Statistics (first 5 words):\n";
-    std::cout << "-----------------------------------\n";
-    for (size_t i = 0; i < std::min(size_t(5), stats.size()); ++i) {
-        const auto& stat = stats[i];
-        const auto& word = all_words[i];
-        std::cout << "Word: " << word.word << " (ID: " << stat.word_id << ")\n";
-        std::cout << "  Avg Orth: " << stat.avg_orth_levenshtein 
-                  << "  Avg Phon: " << stat.avg_phon_levenshtein
-                  << "  Avg LCS: " << stat.avg_lcs_length << "\n";
-        std::cout << "  Close Orth matches: " << stat.count_close_orth
-                  << "  Close Phon matches: " << stat.count_close_phon << "\n";
-        std::cout << "  Orth range: [" << stat.min_orth_levenshtein 
-                  << ", " << stat.max_orth_levenshtein << "]\n";
-        std::cout << "  Phon range: [" << stat.min_phon_levenshtein 
-                  << ", " << stat.max_phon_levenshtein << "]\n\n";
-    }
-
-    // Write to database
-    std::cout << "Writing statistics to database...\n";
-    start = std::chrono::high_resolution_clock::now();
-    size_t written = db_writer.batch_write_average_stats(stats);
-    end = std::chrono::high_resolution_clock::now();
-    auto write_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-    std::cout << "✅ Wrote " << written << " statistics rows\n";
-    std::cout << "⏱️  Writing took " << write_ms << " ms\n\n";
+    // Compute and write average statistics in batches
+    // Batch size: use 1000 for full run, 500 for tests
+    size_t batch_size = (test_n > 0 && test_n < 5000) ? 500 : 1000;
+    std::cout << "Using batch size: " << batch_size << "\n\n";
+    
+    size_t total_written = db_writer.compute_and_write_average_stats_batched(all_words, batch_size, 5, 4);
 
     // Test filtered loading with different thresholds
     std::cout << "\nTesting filtered word loading:\n";

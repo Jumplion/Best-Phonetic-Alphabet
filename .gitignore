@@ -206,3 +206,5 @@ cmudict-0.7b
 *.db.bak
 data/enWikiDump.jsonl
 data/word dumps/enWikiDump.jsonl
+data/BestPhonetics.db-shm
+data/BestPhonetics.db-wal

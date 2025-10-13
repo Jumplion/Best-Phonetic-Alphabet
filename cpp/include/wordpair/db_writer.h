@@ -90,6 +90,17 @@ public:
         int phon_close_threshold = 4
     );
 
+    // Compute and write average statistics in batches
+    // Processes words in chunks, writing results as we go to prevent memory overflow
+    // Returns total number of statistics rows written
+    // batch_size: number of words to process before writing to database
+    size_t compute_and_write_average_stats_batched(
+        const std::vector<Word>& words,
+        size_t batch_size = 1000,
+        int orth_close_threshold = 5,
+        int phon_close_threshold = 4
+    );
+
 private:
     std::string db_path_;
     struct Impl;

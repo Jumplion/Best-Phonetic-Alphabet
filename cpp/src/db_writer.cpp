@@ -6,6 +6,9 @@
 #include <algorithm>
 #include <numeric>
 #include <cmath>
+#include <atomic>
+#include <chrono>
+#include <iomanip>
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -324,6 +327,10 @@ std::vector<WordAverageStats> DBWriter::compute_average_stats(
     std::vector<WordAverageStats> stats(n);
 
     std::cout << "Computing average statistics for " << n << " words...\n";
+    std::cout << "Progress updates every word...\n\n";
+
+    auto computation_start = std::chrono::high_resolution_clock::now();
+    std::atomic<size_t> completed_words(0);
 
     // Parallel computation of statistics
     #pragma omp parallel for schedule(dynamic, 10)
@@ -390,16 +397,196 @@ std::vector<WordAverageStats> DBWriter::compute_average_stats(
         stat.count_close_phon = count_close_phon;
         stat.computed_against_n_words = n_comparisons;
 
-        // Progress reporting (every 1000 words)
-        if (i > 0 && i % 1000 == 0) {
-            #pragma omp critical
-            {
-                std::cout << "  Processed " << i << " / " << n << " words ("
-                          << (100.0 * i / n) << "%)\n";
-            }
+        // Increment completed counter and report progress
+        size_t current_completed = ++completed_words;
+        
+        // Progress reporting
+        #pragma omp critical
+        {
+            auto now = std::chrono::high_resolution_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - computation_start).count();
+            double percent = 100.0 * current_completed / n;
+            double elapsed_sec = std::max(static_cast<double>(elapsed), 1.0);
+            double words_per_sec = static_cast<double>(current_completed) / elapsed_sec;
+            double remaining_words = n - current_completed;
+            double estimated_remaining_sec = remaining_words / std::max(words_per_sec, 0.001);
+            
+            int eta_hours = static_cast<int>(estimated_remaining_sec / 3600);
+            int eta_mins = static_cast<int>((estimated_remaining_sec - eta_hours * 3600) / 60);
+            int eta_secs = static_cast<int>(estimated_remaining_sec) % 60;
+            
+            // Use \r to update the same line
+            std::cout << "\r  Progress: " << current_completed << " / " << n 
+                        << " (" << std::fixed << std::setprecision(2) << percent << "%) | "
+                        << "Speed: " << std::setprecision(1) << words_per_sec << " words/sec | "
+                        << "ETA: " << eta_hours << "h " << eta_mins << "m " << eta_secs << "s    " << std::flush;
         }
     }
 
-    std::cout << "✅ Computed average statistics for " << n << " words.\n";
+    auto computation_end = std::chrono::high_resolution_clock::now();
+    auto total_seconds = std::chrono::duration_cast<std::chrono::seconds>(computation_end - computation_start).count();
+    int hours = total_seconds / 3600;
+    int mins = (total_seconds % 3600) / 60;
+    int secs = total_seconds % 60;
+    
+    std::cout << "\n✅ Computed average statistics for " << n << " words.\n";
+    std::cout << "⏱️  Total time: " << hours << "h " << mins << "m " << secs << "s\n";
     return stats;
+}
+
+size_t DBWriter::compute_and_write_average_stats_batched(
+    const std::vector<Word>& words,
+    size_t batch_size,
+    int orth_close_threshold,
+    int phon_close_threshold
+) {
+    const size_t n = words.size();
+    if (n == 0) {
+        std::cout << "No words to process.\n";
+        return 0;
+    }
+
+    std::cout << "Computing and writing average statistics in batches...\n";
+    std::cout << "Total words: " << n << " | Batch size: " << batch_size << "\n";
+    std::cout << "Progress updates every 100 words...\n\n";
+
+    auto overall_start = std::chrono::high_resolution_clock::now();
+    size_t total_written = 0;
+    
+    // Process in batches
+    for (size_t batch_start = 0; batch_start < n; batch_start += batch_size) {
+        size_t batch_end = std::min(batch_start + batch_size, n);
+        size_t current_batch_size = batch_end - batch_start;
+        
+        std::cout << "\n--- Batch: words " << batch_start << " to " << (batch_end - 1) 
+                  << " (" << current_batch_size << " words) ---\n";
+        
+        // Compute stats for this batch
+        std::vector<WordAverageStats> batch_stats(current_batch_size);
+        
+        auto batch_compute_start = std::chrono::high_resolution_clock::now();
+        std::atomic<size_t> completed_in_batch(0);
+
+        #pragma omp parallel for schedule(dynamic, 10)
+        for (size_t i = batch_start; i < batch_end; ++i) {
+            const Word& word_i = words[i];
+            auto phonemes_i = word_i.get_phonemes();
+
+            // Accumulators for this word
+            long long total_orth = 0;
+            long long total_phon = 0;
+            long long total_lcs = 0;
+            int min_orth = INT_MAX;
+            int max_orth = INT_MIN;
+            int min_phon = INT_MAX;
+            int max_phon = INT_MIN;
+            int count_close_orth = 0;
+            int count_close_phon = 0;
+
+            // Compare against all other words (not just in batch - need full comparison)
+            for (size_t j = 0; j < n; ++j) {
+                if (i == j) continue;
+
+                const Word& word_j = words[j];
+                auto phonemes_j = word_j.get_phonemes();
+
+                // Compute distances
+                int orth_dist = orthographic_levenshtein_score(word_i.word, word_j.word);
+                int phon_dist = phonetic_levenshtein_score(phonemes_i, phonemes_j);
+                auto lcs_seqs = longest_contiguous_subsequence(phonemes_i, phonemes_j);
+                int lcs = lcs_seqs.empty() ? 0 : lcs_seqs[0].size();
+
+                // Accumulate totals
+                total_orth += orth_dist;
+                total_phon += phon_dist;
+                total_lcs += lcs;
+
+                // Track min/max
+                min_orth = std::min(min_orth, orth_dist);
+                max_orth = std::max(max_orth, orth_dist);
+                min_phon = std::min(min_phon, phon_dist);
+                max_phon = std::max(max_phon, phon_dist);
+
+                // Count close matches
+                if (orth_dist <= orth_close_threshold) {
+                    count_close_orth++;
+                }
+                if (phon_dist <= phon_close_threshold) {
+                    count_close_phon++;
+                }
+            }
+
+            // Compute averages
+            const int n_comparisons = n - 1;
+            size_t batch_index = i - batch_start;
+            WordAverageStats& stat = batch_stats[batch_index];
+            stat.word_id = word_i.id;
+            stat.avg_orth_levenshtein = static_cast<double>(total_orth) / n_comparisons;
+            stat.avg_phon_levenshtein = static_cast<double>(total_phon) / n_comparisons;
+            stat.avg_lcs_length = static_cast<double>(total_lcs) / n_comparisons;
+            stat.min_orth_levenshtein = min_orth;
+            stat.max_orth_levenshtein = max_orth;
+            stat.min_phon_levenshtein = min_phon;
+            stat.max_phon_levenshtein = max_phon;
+            stat.count_close_orth = count_close_orth;
+            stat.count_close_phon = count_close_phon;
+            stat.computed_against_n_words = n_comparisons;
+
+            // Progress reporting
+            size_t current_completed = ++completed_in_batch;
+            size_t global_completed = batch_start + current_completed;
+            
+            if (current_completed % 100 == 0 || global_completed == n) {
+                #pragma omp critical
+                {
+                    auto now = std::chrono::high_resolution_clock::now();
+                    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - overall_start).count();
+                    double percent = 100.0 * global_completed / n;
+                    double elapsed_sec = std::max(static_cast<double>(elapsed), 1.0);
+                    double words_per_sec = static_cast<double>(global_completed) / elapsed_sec;
+                    double remaining_words = n - global_completed;
+                    double estimated_remaining_sec = remaining_words / std::max(words_per_sec, 0.001);
+                    
+                    int eta_hours = static_cast<int>(estimated_remaining_sec / 3600);
+                    int eta_mins = static_cast<int>((estimated_remaining_sec - eta_hours * 3600) / 60);
+                    int eta_secs = static_cast<int>(estimated_remaining_sec) % 60;
+                    
+                    std::cout << "\r  Progress: " << global_completed << " / " << n 
+                              << " (" << std::fixed << std::setprecision(2) << percent << "%) | "
+                              << "Speed: " << std::setprecision(1) << words_per_sec << " words/sec | "
+                              << "ETA: " << eta_hours << "h " << eta_mins << "m " << eta_secs << "s    " << std::flush;
+                }
+            }
+        }
+
+        auto batch_compute_end = std::chrono::high_resolution_clock::now();
+        auto compute_ms = std::chrono::duration_cast<std::chrono::milliseconds>(batch_compute_end - batch_compute_start).count();
+        
+        std::cout << "\n  Batch computation took " << (compute_ms / 1000.0) << " seconds\n";
+
+        // Write batch to database
+        std::cout << "  Writing batch to database...\n";
+        auto write_start = std::chrono::high_resolution_clock::now();
+        size_t written = batch_write_average_stats(batch_stats);
+        auto write_end = std::chrono::high_resolution_clock::now();
+        auto write_ms = std::chrono::duration_cast<std::chrono::milliseconds>(write_end - write_start).count();
+        
+        std::cout << "  ✅ Wrote " << written << " rows in " << write_ms << " ms\n";
+        total_written += written;
+    }
+
+    auto overall_end = std::chrono::high_resolution_clock::now();
+    auto total_seconds = std::chrono::duration_cast<std::chrono::seconds>(overall_end - overall_start).count();
+    int hours = total_seconds / 3600;
+    int mins = (total_seconds % 3600) / 60;
+    int secs = total_seconds % 60;
+    
+    std::cout << "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
+    std::cout << "✅ Completed all batches!\n";
+    std::cout << "   Total words processed: " << n << "\n";
+    std::cout << "   Total rows written: " << total_written << "\n";
+    std::cout << "   Total time: " << hours << "h " << mins << "m " << secs << "s\n";
+    std::cout << "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
+    
+    return total_written;
 }
