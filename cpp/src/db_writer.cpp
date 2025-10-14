@@ -499,3 +499,227 @@ size_t DBWriter::compute_and_write_average_stats_batched(
     
     return total_written;
 }
+
+size_t DBWriter::batch_update_metric_stats(
+    const std::vector<WordMetricStats>& stats,
+    const std::string& column_prefix
+) {
+    if (!impl_ || !impl_->db) {
+        std::cerr << "DBWriter not initialized. Call init() first.\n";
+        return 0;
+    }
+
+    if (stats.empty()) {
+        return 0;
+    }
+
+    // Begin transaction for batch update
+    char* err_msg = nullptr;
+    int rc = sqlite3_exec(impl_->db, "BEGIN TRANSACTION;", nullptr, nullptr, &err_msg);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Failed to begin transaction: " << err_msg << std::endl;
+        sqlite3_free(err_msg);
+        return 0;
+    }
+
+    // Prepare UPDATE statement - updates existing rows based on word_id
+    std::string sql = 
+        "UPDATE average_stats SET "
+        "avg_" + column_prefix + " = ?, "
+        "min_" + column_prefix + " = ?, "
+        "max_" + column_prefix + " = ?, "
+        "stddev_" + column_prefix + " = ?, "
+        "count_close_" + column_prefix + " = ? "
+        "WHERE word_id = ?;";
+
+    sqlite3_stmt* stmt = nullptr;
+    rc = sqlite3_prepare_v2(impl_->db, sql.c_str(), -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Failed to prepare update statement: " << sqlite3_errmsg(impl_->db) << std::endl;
+        sqlite3_exec(impl_->db, "ROLLBACK;", nullptr, nullptr, nullptr);
+        return 0;
+    }
+
+    size_t updated = 0;
+    for (const auto& stat : stats) {
+        // Bind parameters
+        sqlite3_bind_double(stmt, 1, stat.avg_value);
+        sqlite3_bind_double(stmt, 2, stat.min_value);
+        sqlite3_bind_double(stmt, 3, stat.max_value);
+        sqlite3_bind_double(stmt, 4, stat.stddev_value);
+        sqlite3_bind_int(stmt, 5, stat.count_close);
+        sqlite3_bind_int(stmt, 6, stat.word_id);
+
+        rc = sqlite3_step(stmt);
+        if (rc != SQLITE_DONE) {
+            std::cerr << "Failed to update stats row for word_id " << stat.word_id 
+                      << ": " << sqlite3_errmsg(impl_->db) << std::endl;
+        } else {
+            updated++;
+        }
+
+        sqlite3_reset(stmt);
+    }
+
+    sqlite3_finalize(stmt);
+
+    // Commit transaction
+    rc = sqlite3_exec(impl_->db, "COMMIT;", nullptr, nullptr, &err_msg);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Failed to commit transaction: " << err_msg << std::endl;
+        sqlite3_free(err_msg);
+        sqlite3_exec(impl_->db, "ROLLBACK;", nullptr, nullptr, nullptr);
+        return 0;
+    }
+
+    return updated;
+}
+
+size_t DBWriter::compute_and_update_metric_batched(
+    const std::vector<Word>& words,
+    const std::string& column_prefix,
+    float (*score_function)(const std::vector<std::string>&, const std::vector<std::string>&),
+    size_t batch_size,
+    float close_threshold
+) {
+    const size_t n = words.size();
+    if (n == 0) {
+        std::cout << "No words to process.\n";
+        return 0;
+    }
+
+    std::cout << "Computing and updating metric '" << column_prefix << "' in batches...\n";
+    std::cout << "Total words: " << n << " | Batch size: " << batch_size << "\n";
+    std::cout << "Close threshold: " << close_threshold << "\n\n";
+
+    auto overall_start = std::chrono::high_resolution_clock::now();
+    size_t total_updated = 0;
+    
+    // Process in batches
+    for (size_t batch_start = 0; batch_start < n; batch_start += batch_size) {
+        size_t batch_end = std::min(batch_start + batch_size, n);
+        size_t current_batch_size = batch_end - batch_start;
+        
+        std::cout << "\n--- Batch: words " << batch_start << " to " << (batch_end - 1) 
+                  << " (" << current_batch_size << " words) ---\n";
+        
+        // Compute stats for this batch
+        std::vector<WordMetricStats> batch_stats(current_batch_size);
+        
+        auto batch_compute_start = std::chrono::high_resolution_clock::now();
+        std::atomic<size_t> completed_in_batch(0);
+
+        #pragma omp parallel for schedule(dynamic, 10)
+        for (size_t i = batch_start; i < batch_end; ++i) {
+            const Word& word_i = words[i];
+            auto phonemes_i = word_i.get_phonemes();
+
+            // Accumulators for this word
+            double total_score = 0.0;
+            float min_score = std::numeric_limits<float>::max();
+            float max_score = std::numeric_limits<float>::lowest();
+            int count_close = 0;
+            
+            // Store all scores for stddev calculation
+            std::vector<float> scores;
+            scores.reserve(n);
+
+            // Compute scores against all other words
+            for (size_t j = 0; j < n; ++j) {
+                if (i == j) continue;
+
+                const Word& word_j = words[j];
+                auto phonemes_j = word_j.get_phonemes();
+
+                // Compute the metric score
+                float score = score_function(phonemes_i, phonemes_j);
+                
+                scores.push_back(score);
+                total_score += score;
+                
+                min_score = std::min(min_score, score);
+                max_score = std::max(max_score, score);
+                
+                if (score <= close_threshold) {
+                    count_close++;
+                }
+            }
+
+            // Compute average
+            const int n_comparisons = n - 1;
+            double avg_score = total_score / n_comparisons;
+            
+            // Compute standard deviation
+            double sum_sq_diff = 0.0;
+            for (float score : scores) {
+                double diff = score - avg_score;
+                sum_sq_diff += diff * diff;
+            }
+            double stddev = std::sqrt(sum_sq_diff / n_comparisons);
+            
+            // Store results
+            size_t batch_index = i - batch_start;
+            WordMetricStats& stat = batch_stats[batch_index];
+            stat.word_id = word_i.id;
+            stat.avg_value = avg_score;
+            stat.min_value = min_score;
+            stat.max_value = max_score;
+            stat.stddev_value = stddev;
+            stat.count_close = count_close;
+
+            // Progress reporting
+            size_t current_completed = ++completed_in_batch;
+            size_t global_completed = batch_start + current_completed;
+            
+            #pragma omp critical
+            {
+                auto now = std::chrono::high_resolution_clock::now();
+                auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - overall_start).count();
+                double percent = 100.0 * global_completed / n;
+                double elapsed_sec = std::max(static_cast<double>(elapsed), 1.0);
+                double words_per_sec = static_cast<double>(global_completed) / elapsed_sec;
+                double remaining_words = n - global_completed;
+                double estimated_remaining_sec = remaining_words / std::max(words_per_sec, 0.001);
+                
+                int eta_hours = static_cast<int>(estimated_remaining_sec / 3600);
+                int eta_mins = static_cast<int>((estimated_remaining_sec - eta_hours * 3600) / 60);
+                int eta_secs = static_cast<int>(estimated_remaining_sec) % 60;
+                
+                std::cout << "\r  Progress: " << global_completed << " / " << n 
+                            << " (" << std::fixed << std::setprecision(2) << percent << "%) | "
+                            << "Speed: " << std::setprecision(1) << words_per_sec << " words/sec | "
+                            << "ETA: " << eta_hours << "h " << eta_mins << "m " << eta_secs << "s    " << std::flush;
+            }
+        }
+
+        auto batch_compute_end = std::chrono::high_resolution_clock::now();
+        auto compute_ms = std::chrono::duration_cast<std::chrono::milliseconds>(batch_compute_end - batch_compute_start).count();
+        
+        std::cout << "\n  Batch computation took " << (compute_ms / 1000.0) << " seconds\n";
+
+        // Update batch in database
+        std::cout << "  Updating batch in database...\n";
+        auto write_start = std::chrono::high_resolution_clock::now();
+        size_t updated = batch_update_metric_stats(batch_stats, column_prefix);
+        auto write_end = std::chrono::high_resolution_clock::now();
+        auto write_ms = std::chrono::duration_cast<std::chrono::milliseconds>(write_end - write_start).count();
+        
+        std::cout << "  ✅ Updated " << updated << " rows in " << write_ms << " ms\n";
+        total_updated += updated;
+    }
+
+    auto overall_end = std::chrono::high_resolution_clock::now();
+    auto total_seconds = std::chrono::duration_cast<std::chrono::seconds>(overall_end - overall_start).count();
+    int hours = total_seconds / 3600;
+    int mins = (total_seconds % 3600) / 60;
+    int secs = total_seconds % 60;
+    
+    std::cout << "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
+    std::cout << "✅ Completed metric computation for '" << column_prefix << "'!\n";
+    std::cout << "   Total words processed: " << n << "\n";
+    std::cout << "   Total rows updated: " << total_updated << "\n";
+    std::cout << "   Total time: " << hours << "h " << mins << "m " << secs << "s\n";
+    std::cout << "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
+    
+    return total_updated;
+}

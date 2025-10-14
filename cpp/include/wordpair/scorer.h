@@ -58,6 +58,18 @@ int phonetic_levenshtein_score(const std::vector<std::string>& a, const std::vec
 float weighted_phonetic_levenshtein_score(const std::vector<std::string>& a, const std::vector<std::string>& b);
 
 /**
+ * Preload phoneme feature-based distances from a SQLite database.
+ *
+ * The function reads the `phoneme_distances` table and the `feature_based_distance`
+ * column and stores symmetric distances for fast lookup. Call this once at startup
+ * (before calling weighted_phonetic_levenshtein_score) to use database distances.
+ *
+ * @param db_path Path to the SQLite database (e.g., "data/BestPhonetics.db").
+ * @return true on success, false on failure.
+ */
+bool preload_phoneme_feature_distances(const std::string& db_path);
+
+/**
  * Compute the Longest Contiguous Subsequence (LCS) of two sequences of tokens.
  *
  * Given two sequences of strings 'a' and 'b', find the longest contiguous sequence

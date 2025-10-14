@@ -53,6 +53,16 @@ struct WordAverageStats {
     int count_close_phon;  // phon_lev <= 4
 };
 
+// Represents statistics for a specific metric (e.g., weighted phonetic Levenshtein)
+struct WordMetricStats {
+    int word_id;
+    double avg_value;
+    double min_value;
+    double max_value;
+    double stddev_value;
+    int count_close;  // count below a threshold
+};
+
 class DBWriter {
 public:
     explicit DBWriter(const std::string& db_path);
@@ -91,6 +101,27 @@ public:
         size_t batch_size = 1000,
         int orth_close_threshold = 5,
         int phon_close_threshold = 4
+    );
+
+    // Compute and update a specific metric (e.g., weighted phonetic Levenshtein) for all words
+    // Updates existing average_stats rows with the specified column
+    // column_name: the database column to update (e.g., "avg_weighted_phon_lev")
+    // score_function: function that takes two phoneme vectors and returns a score
+    // close_threshold: threshold for counting "close" matches
+    // Returns total number of rows updated
+    size_t compute_and_update_metric_batched(
+        const std::vector<Word>& words,
+        const std::string& column_prefix,  // e.g., "weighted_phon_lev" for avg_, min_, max_, stddev_
+        float (*score_function)(const std::vector<std::string>&, const std::vector<std::string>&),
+        size_t batch_size = 1000,
+        float close_threshold = 5.0f
+    );
+
+    // Helper: Update specific metric columns in average_stats table
+    // Uses UPDATE to modify existing rows based on word_id
+    size_t batch_update_metric_stats(
+        const std::vector<WordMetricStats>& stats,
+        const std::string& column_prefix
     );
 
 private:
