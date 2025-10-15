@@ -40,6 +40,13 @@ CREATE TABLE IF NOT EXISTS average_stats (
     stddev_weighted_phon_levenshtein REAL,  -- standard deviation of weighted distances
     count_close_weighted_phon INTEGER,      -- count where weighted_phon_lev <= threshold
     
+    -- Audio-based phonetic Levenshtein (audio-based phoneme distances)
+    avg_audio_phon_levenshtein REAL,        -- avg audio-based phonetic distance
+    min_audio_phon_levenshtein REAL,        -- closest audio-based match
+    max_audio_phon_levenshtein REAL,        -- furthest audio-based match
+    stddev_audio_phon_levenshtein REAL,     -- standard deviation of audio distances
+    count_close_audio_phon INTEGER,         -- count where audio_phon_lev <= threshold
+    
     -- Count of "good matches" (words within threshold)
     count_close_orth INTEGER,               -- count where orth_lev <= 5
     count_close_phon INTEGER,               -- count where phon_lev <= 4
@@ -51,6 +58,7 @@ CREATE TABLE IF NOT EXISTS average_stats (
 CREATE INDEX IF NOT EXISTS idx_avg_stats_orth ON average_stats(avg_orth_levenshtein);
 CREATE INDEX IF NOT EXISTS idx_avg_stats_phon ON average_stats(avg_phon_levenshtein);
 CREATE INDEX IF NOT EXISTS idx_avg_stats_weighted_phon ON average_stats(avg_weighted_phon_levenshtein);
+CREATE INDEX IF NOT EXISTS idx_avg_stats_audio_phon ON average_stats(avg_audio_phon_levenshtein);
 CREATE INDEX IF NOT EXISTS idx_avg_stats_close_count ON average_stats(count_close_orth, count_close_phon);
 
 -- ============================================================

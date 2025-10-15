@@ -58,6 +58,20 @@ int phonetic_levenshtein_score(const std::vector<std::string>& a, const std::vec
 float weighted_phonetic_levenshtein_score(const std::vector<std::string>& a, const std::vector<std::string>& b);
 
 /**
+ * Compute an audio-based weighted phonetic similarity score between two sequences of phonemes.
+ * 
+ * Similar to weighted_phonetic_levenshtein_score but uses audio-based distances from the
+ * `audio_based_distance` column of the phoneme_distances table instead of feature-based distances.
+ * 
+ * @param a First input vector of phonemes (strings).
+ * @param b Second input vector of phonemes (strings).
+ * @return Float audio-based weighted Levenshtein distance between the two phoneme sequences.
+ *
+ * @note Must call preload_phoneme_audio_distances() before using this function.
+ */
+float audio_phonetic_levenshtein_score(const std::vector<std::string>& a, const std::vector<std::string>& b);
+
+/**
  * Preload phoneme feature-based distances from a SQLite database.
  *
  * The function reads the `phoneme_distances` table and the `feature_based_distance`
@@ -68,6 +82,18 @@ float weighted_phonetic_levenshtein_score(const std::vector<std::string>& a, con
  * @return true on success, false on failure.
  */
 bool preload_phoneme_feature_distances(const std::string& db_path);
+
+/**
+ * Preload phoneme audio-based distances from a SQLite database.
+ *
+ * The function reads the `phoneme_distances` table and the `audio_based_distance`
+ * column and stores symmetric distances for fast lookup. Call this once at startup
+ * (before calling audio_phonetic_levenshtein_score) to use database distances.
+ *
+ * @param db_path Path to the SQLite database (e.g., "data/BestPhonetics.db").
+ * @return true on success, false on failure.
+ */
+bool preload_phoneme_audio_distances(const std::string& db_path);
 
 /**
  * Compute the Longest Contiguous Subsequence (LCS) of two sequences of tokens.
