@@ -64,6 +64,14 @@ int main(int argc, char** argv) {
 #endif
     std::cout << "💾 Writing to database in batches of " << batch_size << " pairs\n\n";
 
+    // Pre-parse all phonemes once before parallel computation (Priority 4 optimization)
+    std::cout << "📝 Pre-parsing phonemes for all " << num_words << " words...\n";
+    std::vector<std::vector<std::string>> all_phonemes(num_words);
+    for (size_t i = 0; i < num_words; ++i) {
+        all_phonemes[i] = words[i].get_phonemes();
+    }
+    std::cout << "✅ Phonemes pre-parsed (" << num_words << " words)\n\n";
+
     // Batch buffer for accumulating scores before writing
     std::vector<WordPairScore> batch_buffer;
     batch_buffer.reserve(batch_size);
@@ -98,9 +106,9 @@ int main(int argc, char** argv) {
         const Word& word_a = words[i];
         const Word& word_b = words[j];
         
-        // Parse phonemes (each thread gets its own copy)
-        auto phonemes_a = word_a.get_phonemes();
-        auto phonemes_b = word_b.get_phonemes();
+        // Use pre-parsed phonemes instead of parsing per-pair (Priority 4 optimization)
+        const auto& phonemes_a = all_phonemes[i];
+        const auto& phonemes_b = all_phonemes[j];
 
         // Compute scores for this pair
         WordPairScore score;
