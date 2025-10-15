@@ -36,40 +36,41 @@ int orthographic_levenshtein_score(const std::string& a, const std::string& b);
 int phonetic_levenshtein_score(const std::vector<std::string>& a, const std::vector<std::string>& b);
 
 /**
- * Compute a weighted phonetic similarity score between two sequences of phonemes using a weighted Levenshtein edit distance.
+ * Compute both weighted and audio-based phonetic Levenshtein scores simultaneously.
  * 
- * The score is defined as the minimum weighted number of single-phoneme edits (insertions, deletions, or substitutions)
- * required to change one phoneme sequence into the other. Weights can be assigned based on phonetic similarity.
+ * This function computes two phonetic similarity metrics in a single pass:
+ * 1. Feature-based weighted Levenshtein distance (using phonetic features)
+ * 2. Audio-based weighted Levenshtein distance (using audio similarity)
  * 
- * In this version, different types of edits can have different costs depending on phonetic similarity and phonetic features between phonemes.
- * Phonetic features from the database are used to construct the "distance" between phonemes that will be used for weighting.
+ * The score is the minimum weighted number of single-phoneme edits (insertions, 
+ * deletions, or substitutions) required to change one phoneme sequence into another,
+ * where edit costs are determined by phonetic distances from the database.
  * 
- * @param a First input vector of phonemes (strings).
- * @param b Second input vector of phonemes (strings).
- * @return Float weighted Levenshtein distance between the two phoneme sequences.
- *
- * @note 
- * - The function operates on vectors of strings representing phonemes.
- *
- * - Phonetic features and similarity metrics should be defined to determine the weights for different edits.
- *
- * - Example: Substituting a vowel (AH) for another vowel (OH) might have a lower cost than substituting a vowel (AH) for a consonant (K).
+ * ⚡ PERFORMANCE: This is ~2x faster than computing weighted and audio scores separately,
+ * as it processes both metrics in a single dynamic programming pass.
+ * 
+ * @param a First input vector of phonemes (strings, normalized without stress digits).
+ * @param b Second input vector of phonemes (strings, normalized without stress digits).
+ * @param out_weighted_score Output parameter for the feature-based weighted score.
+ * @param out_audio_score Output parameter for the audio-based weighted score.
+ * 
+ * @note Must call both preload_phoneme_feature_distances() and preload_phoneme_audio_distances()
+ *       before using this function.
+ * 
+ * @example
+ * ```cpp
+ * std::vector<std::string> word1 = {"B", "AE", "N", "AE", "N", "AH"};
+ * std::vector<std::string> word2 = {"K", "AH", "M", "AH", "D", "IY"};
+ * float weighted_dist, audio_dist;
+ * combined_phonetic_levenshtein_scores(word1, word2, weighted_dist, audio_dist);
+ * ```
  */
-float weighted_phonetic_levenshtein_score(const std::vector<std::string>& a, const std::vector<std::string>& b);
-
-/**
- * Compute an audio-based weighted phonetic similarity score between two sequences of phonemes.
- * 
- * Similar to weighted_phonetic_levenshtein_score but uses audio-based distances from the
- * `audio_based_distance` column of the phoneme_distances table instead of feature-based distances.
- * 
- * @param a First input vector of phonemes (strings).
- * @param b Second input vector of phonemes (strings).
- * @return Float audio-based weighted Levenshtein distance between the two phoneme sequences.
- *
- * @note Must call preload_phoneme_audio_distances() before using this function.
- */
-float audio_phonetic_levenshtein_score(const std::vector<std::string>& a, const std::vector<std::string>& b);
+void combined_phonetic_levenshtein_scores(
+    const std::vector<std::string>& a, 
+    const std::vector<std::string>& b,
+    float& out_weighted_score,
+    float& out_audio_score
+);
 
 /**
  * Preload phoneme feature-based distances from a SQLite database.

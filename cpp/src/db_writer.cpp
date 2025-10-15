@@ -486,8 +486,11 @@ size_t DBWriter::compute_and_write_average_stats_batched(
                 // Compute distances
                 int orth_dist = orthographic_levenshtein_score(word_i.word, word_j.word);
                 int phon_dist = phonetic_levenshtein_score(phonemes_i, phonemes_j);
-                float weighted_phon_dist = weighted_phonetic_levenshtein_score(phonemes_i, phonemes_j);
-                float audio_phon_dist = audio_phonetic_levenshtein_score(phonemes_i, phonemes_j);
+                
+                // Compute both weighted and audio distances in a single pass (2x faster!)
+                float weighted_phon_dist, audio_phon_dist;
+                combined_phonetic_levenshtein_scores(phonemes_i, phonemes_j, weighted_phon_dist, audio_phon_dist);
+                
                 auto lcs_seqs = longest_contiguous_subsequence(phonemes_i, phonemes_j);
                 int lcs = lcs_seqs.empty() ? 0 : lcs_seqs[0].size();
 

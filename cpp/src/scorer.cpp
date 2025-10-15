@@ -28,89 +28,6 @@ static void validate_normalized_phonemes(const std::vector<std::string>& phoneme
     }
 }
 
-// Helper: generic weighted phonetic Levenshtein using specified distance map
-static float weighted_phonetic_levenshtein_impl(
-    const std::vector<std::string>& a, 
-    const std::vector<std::string>& b,
-    const std::unordered_map<std::string, float>& distance_map,
-    const char* map_name
-) {
-    // phoneme distance lookup
-    // NOTE: No mutex needed - distance_map is read-only after preloading.
-    // The map is fully populated before any parallel computation begins,
-    // making concurrent reads safe without synchronization.
-    auto map_lookup = [&](const std::string &p1, const std::string &p2, float &out_val) -> bool {
-        // Optimize string key generation: reserve space once and reuse buffer
-        std::string key;
-        key.reserve(p1.size() + p2.size() + 1);  // Pre-allocate to avoid reallocation
-        
-        // Try forward key: "p1|p2"
-        key = p1;
-        key += '|';
-        key += p2;
-        auto it = distance_map.find(key);
-        if (it != distance_map.end()) { out_val = it->second; return true; }
-        
-        // Try reverse key: "p2|p1" (reuse the same buffer)
-        key.clear();
-        key = p2;
-        key += '|';
-        key += p1;
-        it = distance_map.find(key);
-        if (it != distance_map.end()) { out_val = it->second; return true; }
-        
-        return false;
-    };
-
-    auto phoneme_distance = [&](const std::string &p1, const std::string &p2) -> float {
-        if (p1 == p2) return 0.0f;
-        float val = 0.0f;
-        if (map_lookup(p1, p2, val)) return val;
-
-        throw std::runtime_error(
-            std::string("Missing phoneme distance entry in ") + map_name + " for phoneme pair ('" + 
-            p1 + "', '" + p2 + "'). Please ensure the appropriate preload function was called."
-        );
-    };
-
-    const float GAP_BASE = 0.6f;
-    const float GAP_PHONEME_SCALE = 0.8f;
-
-    size_t len_a = a.size();
-    size_t len_b = b.size();
-    
-    if (len_a == 0) return len_b * GAP_BASE;
-    if (len_b == 0) return len_a * GAP_BASE;
-
-    std::vector<float> prev_row(len_b + 1);
-    std::vector<float> curr_row(len_b + 1);
-
-    prev_row[0] = 0.0f;
-    for (size_t j = 1; j <= len_b; ++j) {
-        prev_row[j] = prev_row[j-1] + GAP_BASE;
-    }
-
-    for (size_t i = 1; i <= len_a; ++i) {
-        curr_row[0] = prev_row[0] + GAP_BASE;
-        
-        for (size_t j = 1; j <= len_b; ++j) {
-            // Cache phoneme distance - computed once instead of three times per iteration
-            float phon_dist = phoneme_distance(a[i-1], b[j-1]);
-            float sub_cost = phon_dist;
-            float del_cost = GAP_BASE + GAP_PHONEME_SCALE * phon_dist;
-            float ins_cost = GAP_BASE + GAP_PHONEME_SCALE * phon_dist;
-
-            curr_row[j] = std::min({ prev_row[j] + del_cost,
-                                     curr_row[j-1] + ins_cost,
-                                     prev_row[j-1] + sub_cost });
-        }
-        
-        std::swap(prev_row, curr_row);
-    }
-    
-    return prev_row[len_b];
-}
-
 // Helper: generic preload function for phoneme distances
 static bool preload_phoneme_distances_impl(
     const std::string& db_path,
@@ -237,16 +154,120 @@ int phonetic_levenshtein_score(const std::vector<std::string>& a, const std::vec
     return prev_row[len_b];
 }
 
-float weighted_phonetic_levenshtein_score(const std::vector<std::string>& a, const std::vector<std::string>& b) {
+void combined_phonetic_levenshtein_scores(
+    const std::vector<std::string>& a, 
+    const std::vector<std::string>& b,
+    float& out_weighted_score,
+    float& out_audio_score
+) {
     validate_normalized_phonemes(a, "a");
     validate_normalized_phonemes(b, "b");
-    return weighted_phonetic_levenshtein_impl(a, b, phoneme_distance_map, "feature-based distance map");
-}
 
-float audio_phonetic_levenshtein_score(const std::vector<std::string>& a, const std::vector<std::string>& b) {
-    validate_normalized_phonemes(a, "a");
-    validate_normalized_phonemes(b, "b");
-    return weighted_phonetic_levenshtein_impl(a, b, phoneme_audio_distance_map, "audio-based distance map");
+    // Phoneme distance lookups for both maps
+    auto phoneme_distance_weighted = [&](const std::string &p1, const std::string &p2) -> float {
+        if (p1 == p2) return 0.0f;
+        
+        std::string key;
+        key.reserve(p1.size() + p2.size() + 1);
+        key = p1; key += '|'; key += p2;
+        auto it = phoneme_distance_map.find(key);
+        if (it != phoneme_distance_map.end()) return it->second;
+        
+        key.clear();
+        key = p2; key += '|'; key += p1;
+        it = phoneme_distance_map.find(key);
+        if (it != phoneme_distance_map.end()) return it->second;
+
+        throw std::runtime_error(
+            "Missing phoneme distance entry in feature-based distance map for phoneme pair ('" + 
+            p1 + "', '" + p2 + "'). Please ensure preload_phoneme_feature_distances was called."
+        );
+    };
+
+    auto phoneme_distance_audio = [&](const std::string &p1, const std::string &p2) -> float {
+        if (p1 == p2) return 0.0f;
+        
+        std::string key;
+        key.reserve(p1.size() + p2.size() + 1);
+        key = p1; key += '|'; key += p2;
+        auto it = phoneme_audio_distance_map.find(key);
+        if (it != phoneme_audio_distance_map.end()) return it->second;
+        
+        key.clear();
+        key = p2; key += '|'; key += p1;
+        it = phoneme_audio_distance_map.find(key);
+        if (it != phoneme_audio_distance_map.end()) return it->second;
+
+        throw std::runtime_error(
+            "Missing phoneme distance entry in audio-based distance map for phoneme pair ('" + 
+            p1 + "', '" + p2 + "'). Please ensure preload_phoneme_audio_distances was called."
+        );
+    };
+
+    const float GAP_BASE = 0.6f;
+    const float GAP_PHONEME_SCALE = 0.8f;
+
+    size_t len_a = a.size();
+    size_t len_b = b.size();
+    
+    if (len_a == 0) {
+        out_weighted_score = len_b * GAP_BASE;
+        out_audio_score = len_b * GAP_BASE;
+        return;
+    }
+    if (len_b == 0) {
+        out_weighted_score = len_a * GAP_BASE;
+        out_audio_score = len_a * GAP_BASE;
+        return;
+    }
+
+    // Separate DP rows for each distance metric
+    std::vector<float> prev_row_weighted(len_b + 1);
+    std::vector<float> curr_row_weighted(len_b + 1);
+    std::vector<float> prev_row_audio(len_b + 1);
+    std::vector<float> curr_row_audio(len_b + 1);
+
+    // Initialize first rows
+    prev_row_weighted[0] = 0.0f;
+    prev_row_audio[0] = 0.0f;
+    for (size_t j = 1; j <= len_b; ++j) {
+        prev_row_weighted[j] = prev_row_weighted[j-1] + GAP_BASE;
+        prev_row_audio[j] = prev_row_audio[j-1] + GAP_BASE;
+    }
+
+    // Process both algorithms simultaneously
+    for (size_t i = 1; i <= len_a; ++i) {
+        curr_row_weighted[0] = prev_row_weighted[0] + GAP_BASE;
+        curr_row_audio[0] = prev_row_audio[0] + GAP_BASE;
+        
+        for (size_t j = 1; j <= len_b; ++j) {
+            // Compute distances once for this phoneme pair
+            float phon_dist_weighted = phoneme_distance_weighted(a[i-1], b[j-1]);
+            float phon_dist_audio = phoneme_distance_audio(a[i-1], b[j-1]);
+
+            // Weighted (feature-based) calculation
+            float sub_cost_w = phon_dist_weighted;
+            float del_cost_w = GAP_BASE + GAP_PHONEME_SCALE * phon_dist_weighted;
+            float ins_cost_w = GAP_BASE + GAP_PHONEME_SCALE * phon_dist_weighted;
+            curr_row_weighted[j] = std::min({ prev_row_weighted[j] + del_cost_w,
+                                              curr_row_weighted[j-1] + ins_cost_w,
+                                              prev_row_weighted[j-1] + sub_cost_w });
+
+            // Audio-based calculation
+            float sub_cost_a = phon_dist_audio;
+            float del_cost_a = GAP_BASE + GAP_PHONEME_SCALE * phon_dist_audio;
+            float ins_cost_a = GAP_BASE + GAP_PHONEME_SCALE * phon_dist_audio;
+            curr_row_audio[j] = std::min({ prev_row_audio[j] + del_cost_a,
+                                           curr_row_audio[j-1] + ins_cost_a,
+                                           prev_row_audio[j-1] + sub_cost_a });
+        }
+        
+        std::swap(prev_row_weighted, curr_row_weighted);
+        std::swap(prev_row_audio, curr_row_audio);
+    }
+    
+    out_weighted_score = prev_row_weighted[len_b];
+    out_audio_score = prev_row_audio[len_b];
 }
 
 std::vector<std::vector<std::string>> longest_contiguous_subsequence(const std::vector<std::string>& a, const std::vector<std::string>& b) {
