@@ -1,4 +1,5 @@
 #include "../include/wordpair/db_writer.h"
+#include "../include/wordpair/scorer.h"
 #include <iostream>
 #include <chrono>
 
@@ -14,6 +15,20 @@ int main(int argc, char* argv[]) {
     std::cout << "=================================================\n";
     std::cout << "Average Statistics Computation Test\n";
     std::cout << "=================================================\n";
+    
+    // Preload phoneme distance maps (REQUIRED before computing weighted/audio scores)
+    std::cout << "Preloading phoneme distance maps...\n";
+    if (!preload_phoneme_feature_distances(db_path)) {
+        std::cerr << "Failed to preload feature-based phoneme distances.\n";
+        return 1;
+    }
+    std::cout << "✅ Feature-based distances loaded\n";
+    
+    if (!preload_phoneme_audio_distances(db_path)) {
+        std::cerr << "Failed to preload audio-based phoneme distances.\n";
+        return 1;
+    }
+    std::cout << "✅ Audio-based distances loaded\n\n";
     
     // Initialize database
     DBWriter db_writer(db_path);
@@ -44,7 +59,7 @@ int main(int argc, char* argv[]) {
 
     // Compute and write average statistics in batches
     // Batch size: use 1000 for full run, 500 for tests
-    size_t batch_size = (test_n > 0 && test_n < 5000) ? 500 : 1000;
+    size_t batch_size = (test_n > 0 && test_n < 5000) ? 250 : 500;
     std::cout << "Using batch size: " << batch_size << "\n\n";
     
     size_t total_written = db_writer.compute_and_write_average_stats_batched(all_words, batch_size, 5, 4);

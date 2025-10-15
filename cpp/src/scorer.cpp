@@ -7,8 +7,11 @@
 #include <iostream>
 
 // File-scope phoneme distance caches
+// These maps are populated once during initialization and then treated as read-only,
+// making them safe for concurrent access from multiple threads without locking.
 static std::unordered_map<std::string, float> phoneme_distance_map;  // feature-based distances
 static std::unordered_map<std::string, float> phoneme_audio_distance_map;  // audio-based distances
+// Mutex only used during initialization to ensure safe map updates
 static std::mutex phoneme_map_mutex;
 
 // Helper: validate that phonemes don't contain stress digits
@@ -33,15 +36,29 @@ static float weighted_phonetic_levenshtein_impl(
     const char* map_name
 ) {
     // phoneme distance lookup
+    // NOTE: No mutex needed - distance_map is read-only after preloading.
+    // The map is fully populated before any parallel computation begins,
+    // making concurrent reads safe without synchronization.
     auto map_lookup = [&](const std::string &p1, const std::string &p2, float &out_val) -> bool {
-        std::string k1 = p1 + "|" + p2;
-        std::lock_guard<std::mutex> lk(phoneme_map_mutex);
-        auto it = distance_map.find(k1);
+        // Optimize string key generation: reserve space once and reuse buffer
+        std::string key;
+        key.reserve(p1.size() + p2.size() + 1);  // Pre-allocate to avoid reallocation
+        
+        // Try forward key: "p1|p2"
+        key = p1;
+        key += '|';
+        key += p2;
+        auto it = distance_map.find(key);
         if (it != distance_map.end()) { out_val = it->second; return true; }
-        // Check reverse key
-        std::string k2 = p2 + "|" + p1;
-        it = distance_map.find(k2);
+        
+        // Try reverse key: "p2|p1" (reuse the same buffer)
+        key.clear();
+        key = p2;
+        key += '|';
+        key += p1;
+        it = distance_map.find(key);
         if (it != distance_map.end()) { out_val = it->second; return true; }
+        
         return false;
     };
 
@@ -77,9 +94,11 @@ static float weighted_phonetic_levenshtein_impl(
         curr_row[0] = prev_row[0] + GAP_BASE;
         
         for (size_t j = 1; j <= len_b; ++j) {
-            float sub_cost = phoneme_distance(a[i-1], b[j-1]);
-            float del_cost = GAP_BASE + GAP_PHONEME_SCALE * phoneme_distance(a[i-1], b[j-1]);
-            float ins_cost = GAP_BASE + GAP_PHONEME_SCALE * phoneme_distance(a[i-1], b[j-1]);
+            // Cache phoneme distance - computed once instead of three times per iteration
+            float phon_dist = phoneme_distance(a[i-1], b[j-1]);
+            float sub_cost = phon_dist;
+            float del_cost = GAP_BASE + GAP_PHONEME_SCALE * phon_dist;
+            float ins_cost = GAP_BASE + GAP_PHONEME_SCALE * phon_dist;
 
             curr_row[j] = std::min({ prev_row[j] + del_cost,
                                      curr_row[j-1] + ins_cost,
@@ -150,39 +169,72 @@ int orthographic_levenshtein_score(const std::string& a, const std::string& b) {
 
     size_t len_a = a_lower.size();
     size_t len_b = b_lower.size();
-    std::vector<std::vector<int>> dp(len_a + 1, std::vector<int>(len_b + 1));
+    
+    // Handle edge cases
+    if (len_a == 0) return static_cast<int>(len_b);
+    if (len_b == 0) return static_cast<int>(len_a);
+    
+    // Space-optimized: use only two rows instead of full 2D matrix
+    // This reduces memory from O(n*m) to O(m), improving cache locality
+    std::vector<int> prev_row(len_b + 1);
+    std::vector<int> curr_row(len_b + 1);
 
-    for (size_t i = 0; i <= len_a; ++i) dp[i][0] = i;
-    for (size_t j = 0; j <= len_b; ++j) dp[0][j] = j;
+    // Initialize first row
+    for (size_t j = 0; j <= len_b; ++j) {
+        prev_row[j] = static_cast<int>(j);
+    }
 
+    // Process each character in string a
     for (size_t i = 1; i <= len_a; ++i) {
+        curr_row[0] = static_cast<int>(i);
+        
         for (size_t j = 1; j <= len_b; ++j) {
             int cost = (a_lower[i - 1] == b_lower[j - 1]) ? 0 : 1;
-            dp[i][j] = std::min({ dp[i - 1][j] + 1,      // Deletion
-                                  dp[i][j - 1] + 1,      // Insertion
-                                  dp[i - 1][j - 1] + cost }); // Substitution
+            curr_row[j] = std::min({ prev_row[j] + 1,         // Deletion
+                                     curr_row[j - 1] + 1,     // Insertion
+                                     prev_row[j - 1] + cost });  // Substitution
         }
+        
+        // Swap rows for next iteration
+        std::swap(prev_row, curr_row);
     }
-    return dp[len_a][len_b];
+    
+    return prev_row[len_b];
 }
 
 int phonetic_levenshtein_score(const std::vector<std::string>& a, const std::vector<std::string>& b) {
     size_t len_a = a.size();
     size_t len_b = b.size();
-    std::vector<std::vector<int>> dp(len_a + 1, std::vector<int>(len_b + 1));
+    
+    // Handle edge cases
+    if (len_a == 0) return static_cast<int>(len_b);
+    if (len_b == 0) return static_cast<int>(len_a);
+    
+    // Space-optimized: use only two rows instead of full 2D matrix
+    std::vector<int> prev_row(len_b + 1);
+    std::vector<int> curr_row(len_b + 1);
 
-    for (size_t i = 0; i <= len_a; ++i) dp[i][0] = i;
-    for (size_t j = 0; j <= len_b; ++j) dp[0][j] = j;
+    // Initialize first row
+    for (size_t j = 0; j <= len_b; ++j) {
+        prev_row[j] = static_cast<int>(j);
+    }
 
+    // Process each phoneme in sequence a
     for (size_t i = 1; i <= len_a; ++i) {
+        curr_row[0] = static_cast<int>(i);
+        
         for (size_t j = 1; j <= len_b; ++j) {
             int cost = (a[i - 1] == b[j - 1]) ? 0 : 1;
-            dp[i][j] = std::min({ dp[i - 1][j] + 1,      // Deletion
-                                  dp[i][j - 1] + 1,      // Insertion
-                                  dp[i - 1][j - 1] + cost }); // Substitution
+            curr_row[j] = std::min({ prev_row[j] + 1,         // Deletion
+                                     curr_row[j - 1] + 1,     // Insertion
+                                     prev_row[j - 1] + cost });  // Substitution
         }
+        
+        // Swap rows for next iteration
+        std::swap(prev_row, curr_row);
     }
-    return dp[len_a][len_b];
+    
+    return prev_row[len_b];
 }
 
 float weighted_phonetic_levenshtein_score(const std::vector<std::string>& a, const std::vector<std::string>& b) {
