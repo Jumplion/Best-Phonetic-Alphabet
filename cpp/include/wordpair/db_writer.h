@@ -48,6 +48,13 @@ struct WordAverageStats {
     int max_phon_levenshtein;
     double stddev_phon_levenshtein;
     
+    // Weighted phonetic Levenshtein (feature-based phoneme distances)
+    double avg_weighted_phon_levenshtein;
+    double min_weighted_phon_levenshtein;
+    double max_weighted_phon_levenshtein;
+    double stddev_weighted_phon_levenshtein;
+    int count_close_weighted_phon;
+    
     // Count of close matches
     int count_close_orth;  // orth_lev <= 5
     int count_close_phon;  // phon_lev <= 4

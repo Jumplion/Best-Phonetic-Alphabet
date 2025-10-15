@@ -36,6 +36,83 @@ struct DBWriter::Impl {
     sqlite3* db = nullptr;
 };
 
+// Helper function to execute pragma with error handling
+static bool execute_pragma(sqlite3* db, const char* pragma_sql) {
+    char* err_msg = nullptr;
+    int rc = sqlite3_exec(db, pragma_sql, nullptr, nullptr, &err_msg);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Warning: Failed to execute pragma '" << pragma_sql << "': " << err_msg << std::endl;
+        sqlite3_free(err_msg);
+        return false;
+    }
+    return true;
+}
+
+// Helper function to begin transaction
+static bool begin_transaction(sqlite3* db) {
+    char* err_msg = nullptr;
+    int rc = sqlite3_exec(db, "BEGIN TRANSACTION;", nullptr, nullptr, &err_msg);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Failed to begin transaction: " << err_msg << std::endl;
+        sqlite3_free(err_msg);
+        return false;
+    }
+    return true;
+}
+
+// Helper function to commit transaction
+static bool commit_transaction(sqlite3* db) {
+    char* err_msg = nullptr;
+    int rc = sqlite3_exec(db, "COMMIT;", nullptr, nullptr, &err_msg);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Failed to commit transaction: " << err_msg << std::endl;
+        sqlite3_free(err_msg);
+        sqlite3_exec(db, "ROLLBACK;", nullptr, nullptr, nullptr);
+        return false;
+    }
+    return true;
+}
+
+// Helper function to pre-parse all phonemes
+static std::vector<std::vector<std::string>> preparse_phonemes(const std::vector<Word>& words) {
+    const size_t n = words.size();
+    std::cout << "Pre-parsing phonemes for all " << n << " words...\n";
+    auto start = std::chrono::high_resolution_clock::now();
+    
+    std::vector<std::vector<std::string>> all_phonemes;
+    all_phonemes.reserve(n);
+    for (const auto& word : words) {
+        all_phonemes.push_back(word.get_phonemes());
+    }
+    
+    auto end = std::chrono::high_resolution_clock::now();
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+    std::cout << "✅ Pre-parsed " << n << " phoneme lists in " << ms << "ms\n\n";
+    
+    return all_phonemes;
+}
+
+// Helper function to report progress
+static void report_progress(size_t global_completed, size_t total, 
+                           const std::chrono::high_resolution_clock::time_point& start_time) {
+    auto now = std::chrono::high_resolution_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - start_time).count();
+    double percent = 100.0 * global_completed / total;
+    double elapsed_sec = std::max(static_cast<double>(elapsed), 1.0);
+    double words_per_sec = static_cast<double>(global_completed) / elapsed_sec;
+    double remaining_words = total - global_completed;
+    double estimated_remaining_sec = remaining_words / std::max(words_per_sec, 0.001);
+    
+    int eta_hours = static_cast<int>(estimated_remaining_sec / 3600);
+    int eta_mins = static_cast<int>((estimated_remaining_sec - eta_hours * 3600) / 60);
+    int eta_secs = static_cast<int>(estimated_remaining_sec) % 60;
+    
+    std::cout << "\r  Progress: " << global_completed << " / " << total 
+              << " (" << std::fixed << std::setprecision(2) << percent << "%) | "
+              << "Speed: " << std::setprecision(1) << words_per_sec << " words/sec | "
+              << "ETA: " << eta_hours << "h " << eta_mins << "m " << eta_secs << "s    " << std::flush;
+}
+
 DBWriter::DBWriter(const std::string& db_path) : db_path_(db_path), impl_(new Impl()) {}
 
 DBWriter::~DBWriter() {
@@ -53,6 +130,16 @@ bool DBWriter::init() {
         std::cerr << "Failed to open DB: " << sqlite3_errmsg(impl_->db) << std::endl;
         return false;
     }
+
+    // Apply performance-optimized pragmas for bulk operations
+    execute_pragma(impl_->db, "PRAGMA journal_mode=WAL;");          // WAL mode for better concurrency
+    execute_pragma(impl_->db, "PRAGMA synchronous=NORMAL;");        // Balance safety/speed with WAL
+    execute_pragma(impl_->db, "PRAGMA cache_size=-65536;");         // 64MB cache (negative = KB)
+    execute_pragma(impl_->db, "PRAGMA temp_store=MEMORY;");         // Memory for temp tables
+    execute_pragma(impl_->db, "PRAGMA page_size=8192;");            // 8KB pages for large DBs
+    execute_pragma(impl_->db, "PRAGMA mmap_size=268435456;");       // 256MB memory-mapped I/O
+
+    std::cout << "✅ Database opened with performance optimizations enabled\n";
     return true;
 }
 
@@ -114,11 +201,7 @@ size_t DBWriter::batch_write_scores(const std::vector<WordPairScore>& scores) {
     }
 
     // Begin transaction for batch insert
-    char* err_msg = nullptr;
-    int rc = sqlite3_exec(impl_->db, "BEGIN TRANSACTION;", nullptr, nullptr, &err_msg);
-    if (rc != SQLITE_OK) {
-        std::cerr << "Failed to begin transaction: " << err_msg << std::endl;
-        sqlite3_free(err_msg);
+    if (!begin_transaction(impl_->db)) {
         return 0;
     }
 
@@ -134,7 +217,7 @@ size_t DBWriter::batch_write_scores(const std::vector<WordPairScore>& scores) {
     )";
 
     sqlite3_stmt* stmt = nullptr;
-    rc = sqlite3_prepare_v2(impl_->db, sql, -1, &stmt, nullptr);
+    int rc = sqlite3_prepare_v2(impl_->db, sql, -1, &stmt, nullptr);
     if (rc != SQLITE_OK) {
         std::cerr << "Failed to prepare insert statement: " << sqlite3_errmsg(impl_->db) << std::endl;
         sqlite3_exec(impl_->db, "ROLLBACK;", nullptr, nullptr, nullptr);
@@ -165,11 +248,7 @@ size_t DBWriter::batch_write_scores(const std::vector<WordPairScore>& scores) {
     sqlite3_finalize(stmt);
 
     // Commit transaction
-    rc = sqlite3_exec(impl_->db, "COMMIT;", nullptr, nullptr, &err_msg);
-    if (rc != SQLITE_OK) {
-        std::cerr << "Failed to commit transaction: " << err_msg << std::endl;
-        sqlite3_free(err_msg);
-        sqlite3_exec(impl_->db, "ROLLBACK;", nullptr, nullptr, nullptr);
+    if (!commit_transaction(impl_->db)) {
         return 0;
     }
 
@@ -187,11 +266,7 @@ size_t DBWriter::batch_write_average_stats(const std::vector<WordAverageStats>& 
     }
 
     // Begin transaction for batch insert
-    char* err_msg = nullptr;
-    int rc = sqlite3_exec(impl_->db, "BEGIN TRANSACTION;", nullptr, nullptr, &err_msg);
-    if (rc != SQLITE_OK) {
-        std::cerr << "Failed to begin transaction: " << err_msg << std::endl;
-        sqlite3_free(err_msg);
+    if (!begin_transaction(impl_->db)) {
         return 0;
     }
 
@@ -202,12 +277,15 @@ size_t DBWriter::batch_write_average_stats(const std::vector<WordAverageStats>& 
             avg_orth_levenshtein, avg_phon_levenshtein, avg_lcs_length,
             min_orth_levenshtein, max_orth_levenshtein, stddev_orth_levenshtein,
             min_phon_levenshtein, max_phon_levenshtein, stddev_phon_levenshtein,
+            avg_weighted_phon_levenshtein, min_weighted_phon_levenshtein, 
+            max_weighted_phon_levenshtein, stddev_weighted_phon_levenshtein,
+            count_close_weighted_phon,
             count_close_orth, count_close_phon
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
     )";
 
     sqlite3_stmt* stmt = nullptr;
-    rc = sqlite3_prepare_v2(impl_->db, sql, -1, &stmt, nullptr);
+    int rc = sqlite3_prepare_v2(impl_->db, sql, -1, &stmt, nullptr);
     if (rc != SQLITE_OK) {
         std::cerr << "Failed to prepare insert statement: " << sqlite3_errmsg(impl_->db) << std::endl;
         sqlite3_exec(impl_->db, "ROLLBACK;", nullptr, nullptr, nullptr);
@@ -227,8 +305,13 @@ size_t DBWriter::batch_write_average_stats(const std::vector<WordAverageStats>& 
         sqlite3_bind_int(stmt, 8, stat.min_phon_levenshtein);
         sqlite3_bind_int(stmt, 9, stat.max_phon_levenshtein);
         sqlite3_bind_double(stmt, 10, stat.stddev_phon_levenshtein);
-        sqlite3_bind_int(stmt, 11, stat.count_close_orth);
-        sqlite3_bind_int(stmt, 12, stat.count_close_phon);
+        sqlite3_bind_double(stmt, 11, stat.avg_weighted_phon_levenshtein);
+        sqlite3_bind_double(stmt, 12, stat.min_weighted_phon_levenshtein);
+        sqlite3_bind_double(stmt, 13, stat.max_weighted_phon_levenshtein);
+        sqlite3_bind_double(stmt, 14, stat.stddev_weighted_phon_levenshtein);
+        sqlite3_bind_int(stmt, 15, stat.count_close_weighted_phon);
+        sqlite3_bind_int(stmt, 16, stat.count_close_orth);
+        sqlite3_bind_int(stmt, 17, stat.count_close_phon);
 
         rc = sqlite3_step(stmt);
         if (rc != SQLITE_DONE) {
@@ -243,11 +326,7 @@ size_t DBWriter::batch_write_average_stats(const std::vector<WordAverageStats>& 
     sqlite3_finalize(stmt);
 
     // Commit transaction
-    rc = sqlite3_exec(impl_->db, "COMMIT;", nullptr, nullptr, &err_msg);
-    if (rc != SQLITE_OK) {
-        std::cerr << "Failed to commit transaction: " << err_msg << std::endl;
-        sqlite3_free(err_msg);
-        sqlite3_exec(impl_->db, "ROLLBACK;", nullptr, nullptr, nullptr);
+    if (!commit_transaction(impl_->db)) {
         return 0;
     }
 
@@ -337,6 +416,10 @@ size_t DBWriter::compute_and_write_average_stats_batched(
     auto overall_start = std::chrono::high_resolution_clock::now();
     size_t total_written = 0;
     
+    // PRE-PARSE OPTIMIZATION: Parse all phonemes once upfront
+    // This avoids repeated string splitting in the inner loop (1.5-2× speedup)
+    std::vector<std::vector<std::string>> all_phonemes = preparse_phonemes(words);
+    
     // Process in batches
     for (size_t batch_start = 0; batch_start < n; batch_start += batch_size) {
         size_t batch_end = std::min(batch_start + batch_size, n);
@@ -354,52 +437,63 @@ size_t DBWriter::compute_and_write_average_stats_batched(
         #pragma omp parallel for schedule(dynamic, 10)
         for (size_t i = batch_start; i < batch_end; ++i) {
             const Word& word_i = words[i];
-            auto phonemes_i = word_i.get_phonemes();
+            const auto& phonemes_i = all_phonemes[i];  // Use pre-parsed phonemes
 
             // Accumulators for this word
             long long total_orth = 0;
             long long total_phon = 0;
             long long total_lcs = 0;
+            double total_weighted_phon = 0.0;
             int min_orth = INT_MAX;
             int max_orth = INT_MIN;
             int min_phon = INT_MAX;
             int max_phon = INT_MIN;
+            float min_weighted_phon = std::numeric_limits<float>::max();
+            float max_weighted_phon = std::numeric_limits<float>::lowest();
             int count_close_orth = 0;
             int count_close_phon = 0;
+            int count_close_weighted_phon = 0;
             
             // Store all distances for stddev calculation
             std::vector<int> orth_distances;
             std::vector<int> phon_distances;
+            std::vector<float> weighted_phon_distances;
             orth_distances.reserve(n);
             phon_distances.reserve(n);
+            weighted_phon_distances.reserve(n);
 
             // First pass: compute means and collect distances
             for (size_t j = 0; j < n; ++j) {
                 if (i == j) continue;
 
                 const Word& word_j = words[j];
-                auto phonemes_j = word_j.get_phonemes();
+                const auto& phonemes_j = all_phonemes[j];  // Use pre-parsed phonemes
 
                 // Compute distances
                 int orth_dist = orthographic_levenshtein_score(word_i.word, word_j.word);
                 int phon_dist = phonetic_levenshtein_score(phonemes_i, phonemes_j);
+                float weighted_phon_dist = weighted_phonetic_levenshtein_score(phonemes_i, phonemes_j);
                 auto lcs_seqs = longest_contiguous_subsequence(phonemes_i, phonemes_j);
                 int lcs = lcs_seqs.empty() ? 0 : lcs_seqs[0].size();
 
                 // Store for stddev calculation
                 orth_distances.push_back(orth_dist);
                 phon_distances.push_back(phon_dist);
+                weighted_phon_distances.push_back(weighted_phon_dist);
 
                 // Accumulate totals
                 total_orth += orth_dist;
                 total_phon += phon_dist;
                 total_lcs += lcs;
+                total_weighted_phon += weighted_phon_dist;
 
                 // Track min/max
                 min_orth = std::min(min_orth, orth_dist);
                 max_orth = std::max(max_orth, orth_dist);
                 min_phon = std::min(min_phon, phon_dist);
                 max_phon = std::max(max_phon, phon_dist);
+                min_weighted_phon = std::min(min_weighted_phon, weighted_phon_dist);
+                max_weighted_phon = std::max(max_weighted_phon, weighted_phon_dist);
 
                 // Count close matches
                 if (orth_dist <= orth_close_threshold) {
@@ -408,24 +502,33 @@ size_t DBWriter::compute_and_write_average_stats_batched(
                 if (phon_dist <= phon_close_threshold) {
                     count_close_phon++;
                 }
+                // Use a reasonable threshold for weighted distance (e.g., 30% of max phoneme count)
+                if (weighted_phon_dist <= static_cast<float>(std::max(phonemes_i.size(), phonemes_j.size())) * 0.3f) {
+                    count_close_weighted_phon++;
+                }
             }
 
             // Compute averages
             const int n_comparisons = n - 1;
             double avg_orth = static_cast<double>(total_orth) / n_comparisons;
             double avg_phon = static_cast<double>(total_phon) / n_comparisons;
+            double avg_weighted_phon = total_weighted_phon / n_comparisons;
             
             // Second pass: compute standard deviations
             double sum_sq_diff_orth = 0.0;
             double sum_sq_diff_phon = 0.0;
+            double sum_sq_diff_weighted_phon = 0.0;
             for (size_t k = 0; k < orth_distances.size(); ++k) {
                 double diff_orth = orth_distances[k] - avg_orth;
                 double diff_phon = phon_distances[k] - avg_phon;
+                double diff_weighted_phon = weighted_phon_distances[k] - avg_weighted_phon;
                 sum_sq_diff_orth += diff_orth * diff_orth;
                 sum_sq_diff_phon += diff_phon * diff_phon;
+                sum_sq_diff_weighted_phon += diff_weighted_phon * diff_weighted_phon;
             }
             double stddev_orth = std::sqrt(sum_sq_diff_orth / n_comparisons);
             double stddev_phon = std::sqrt(sum_sq_diff_phon / n_comparisons);
+            double stddev_weighted_phon = std::sqrt(sum_sq_diff_weighted_phon / n_comparisons);
             
             // Store results
             size_t batch_index = i - batch_start;
@@ -440,6 +543,11 @@ size_t DBWriter::compute_and_write_average_stats_batched(
             stat.min_phon_levenshtein = min_phon;
             stat.max_phon_levenshtein = max_phon;
             stat.stddev_phon_levenshtein = stddev_phon;
+            stat.avg_weighted_phon_levenshtein = avg_weighted_phon;
+            stat.min_weighted_phon_levenshtein = min_weighted_phon;
+            stat.max_weighted_phon_levenshtein = max_weighted_phon;
+            stat.stddev_weighted_phon_levenshtein = stddev_weighted_phon;
+            stat.count_close_weighted_phon = count_close_weighted_phon;
             stat.count_close_orth = count_close_orth;
             stat.count_close_phon = count_close_phon;
 
@@ -449,22 +557,7 @@ size_t DBWriter::compute_and_write_average_stats_batched(
             
             #pragma omp critical
             {
-                auto now = std::chrono::high_resolution_clock::now();
-                auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - overall_start).count();
-                double percent = 100.0 * global_completed / n;
-                double elapsed_sec = std::max(static_cast<double>(elapsed), 1.0);
-                double words_per_sec = static_cast<double>(global_completed) / elapsed_sec;
-                double remaining_words = n - global_completed;
-                double estimated_remaining_sec = remaining_words / std::max(words_per_sec, 0.001);
-                
-                int eta_hours = static_cast<int>(estimated_remaining_sec / 3600);
-                int eta_mins = static_cast<int>((estimated_remaining_sec - eta_hours * 3600) / 60);
-                int eta_secs = static_cast<int>(estimated_remaining_sec) % 60;
-                
-                std::cout << "\r  Progress: " << global_completed << " / " << n 
-                            << " (" << std::fixed << std::setprecision(2) << percent << "%) | "
-                            << "Speed: " << std::setprecision(1) << words_per_sec << " words/sec | "
-                            << "ETA: " << eta_hours << "h " << eta_mins << "m " << eta_secs << "s    " << std::flush;
+                report_progress(global_completed, n, overall_start);
             }
         }
 
@@ -514,11 +607,7 @@ size_t DBWriter::batch_update_metric_stats(
     }
 
     // Begin transaction for batch update
-    char* err_msg = nullptr;
-    int rc = sqlite3_exec(impl_->db, "BEGIN TRANSACTION;", nullptr, nullptr, &err_msg);
-    if (rc != SQLITE_OK) {
-        std::cerr << "Failed to begin transaction: " << err_msg << std::endl;
-        sqlite3_free(err_msg);
+    if (!begin_transaction(impl_->db)) {
         return 0;
     }
 
@@ -533,7 +622,7 @@ size_t DBWriter::batch_update_metric_stats(
         "WHERE word_id = ?;";
 
     sqlite3_stmt* stmt = nullptr;
-    rc = sqlite3_prepare_v2(impl_->db, sql.c_str(), -1, &stmt, nullptr);
+    int rc = sqlite3_prepare_v2(impl_->db, sql.c_str(), -1, &stmt, nullptr);
     if (rc != SQLITE_OK) {
         std::cerr << "Failed to prepare update statement: " << sqlite3_errmsg(impl_->db) << std::endl;
         sqlite3_exec(impl_->db, "ROLLBACK;", nullptr, nullptr, nullptr);
@@ -564,11 +653,7 @@ size_t DBWriter::batch_update_metric_stats(
     sqlite3_finalize(stmt);
 
     // Commit transaction
-    rc = sqlite3_exec(impl_->db, "COMMIT;", nullptr, nullptr, &err_msg);
-    if (rc != SQLITE_OK) {
-        std::cerr << "Failed to commit transaction: " << err_msg << std::endl;
-        sqlite3_free(err_msg);
-        sqlite3_exec(impl_->db, "ROLLBACK;", nullptr, nullptr, nullptr);
+    if (!commit_transaction(impl_->db)) {
         return 0;
     }
 
@@ -592,6 +677,9 @@ size_t DBWriter::compute_and_update_metric_batched(
     std::cout << "Total words: " << n << " | Batch size: " << batch_size << "\n";
     std::cout << "Close threshold: " << close_threshold << "\n\n";
 
+    // Pre-parse phonemes once for all words
+    std::vector<std::vector<std::string>> all_phonemes = preparse_phonemes(words);
+
     auto overall_start = std::chrono::high_resolution_clock::now();
     size_t total_updated = 0;
     
@@ -612,7 +700,7 @@ size_t DBWriter::compute_and_update_metric_batched(
         #pragma omp parallel for schedule(dynamic, 10)
         for (size_t i = batch_start; i < batch_end; ++i) {
             const Word& word_i = words[i];
-            auto phonemes_i = word_i.get_phonemes();
+            const auto& phonemes_i = all_phonemes[i];  // Use pre-parsed phonemes
 
             // Accumulators for this word
             double total_score = 0.0;
@@ -629,7 +717,7 @@ size_t DBWriter::compute_and_update_metric_batched(
                 if (i == j) continue;
 
                 const Word& word_j = words[j];
-                auto phonemes_j = word_j.get_phonemes();
+                const auto& phonemes_j = all_phonemes[j];  // Use pre-parsed phonemes
 
                 // Compute the metric score
                 float score = score_function(phonemes_i, phonemes_j);
@@ -673,22 +761,7 @@ size_t DBWriter::compute_and_update_metric_batched(
             
             #pragma omp critical
             {
-                auto now = std::chrono::high_resolution_clock::now();
-                auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - overall_start).count();
-                double percent = 100.0 * global_completed / n;
-                double elapsed_sec = std::max(static_cast<double>(elapsed), 1.0);
-                double words_per_sec = static_cast<double>(global_completed) / elapsed_sec;
-                double remaining_words = n - global_completed;
-                double estimated_remaining_sec = remaining_words / std::max(words_per_sec, 0.001);
-                
-                int eta_hours = static_cast<int>(estimated_remaining_sec / 3600);
-                int eta_mins = static_cast<int>((estimated_remaining_sec - eta_hours * 3600) / 60);
-                int eta_secs = static_cast<int>(estimated_remaining_sec) % 60;
-                
-                std::cout << "\r  Progress: " << global_completed << " / " << n 
-                            << " (" << std::fixed << std::setprecision(2) << percent << "%) | "
-                            << "Speed: " << std::setprecision(1) << words_per_sec << " words/sec | "
-                            << "ETA: " << eta_hours << "h " << eta_mins << "m " << eta_secs << "s    " << std::flush;
+                report_progress(global_completed, n, overall_start);
             }
         }
 
