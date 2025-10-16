@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include <mutex>
 #include <iostream>
+#include <unordered_set>
 
 // File-scope phoneme distance caches
 // These maps are populated once during initialization and then treated as read-only,
@@ -283,4 +284,50 @@ bool preload_phoneme_feature_distances(const std::string& db_path) {
 
 bool preload_phoneme_audio_distances(const std::string& db_path) {
     return preload_phoneme_distances_impl(db_path, "audio_based_distance", phoneme_audio_distance_map);
+}
+
+float orthographic_jaccard_index(const std::string& a, const std::string& b) {
+    std::unordered_set<char> set_a(a.begin(), a.end());
+    std::unordered_set<char> set_b(b.begin(), b.end());
+    
+    if (set_a.empty() && set_b.empty()) {
+        return 1.0f;  // Both sets empty, treat as identical
+    }
+    
+    size_t intersection_size = 0;
+    for (char c : set_a) {
+        if (set_b.count(c)) {
+            intersection_size++;
+        }
+    }
+    
+    size_t union_size = set_a.size() + set_b.size() - intersection_size;
+    if (union_size == 0) {
+        return 0.0f;  // Avoid division by zero, though this case is handled above
+    }
+    
+    return static_cast<float>(intersection_size) / static_cast<float>(union_size);
+}
+
+float phonetic_jaccard_index(const std::vector<std::string>& a, const std::vector<std::string>& b) {
+    std::unordered_set<std::string> set_a(a.begin(), a.end());
+    std::unordered_set<std::string> set_b(b.begin(), b.end());
+    
+    if (set_a.empty() && set_b.empty()) {
+        return 1.0f;  // Both sets empty, treat as identical
+    }
+    
+    size_t intersection_size = 0;
+    for (const auto& p : set_a) {
+        if (set_b.count(p)) {
+            intersection_size++;
+        }
+    }
+    
+    size_t union_size = set_a.size() + set_b.size() - intersection_size;
+    if (union_size == 0) {
+        return 0.0f;  // Avoid division by zero, though this case is handled above
+    }
+    
+    return static_cast<float>(intersection_size) / static_cast<float>(union_size);
 }

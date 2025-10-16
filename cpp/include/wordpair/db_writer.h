@@ -65,6 +65,18 @@ struct WordAverageStats {
     double stddev_audio_phon_levenshtein;
     int count_close_audio_phon;
     
+    // Orthographic Jaccard index statistics
+    double avg_orth_jaccard;
+    double min_orth_jaccard;
+    double max_orth_jaccard;
+    double stddev_orth_jaccard;
+    
+    // Phonetic Jaccard index statistics
+    double avg_phon_jaccard;
+    double min_phon_jaccard;
+    double max_phon_jaccard;
+    double stddev_phon_jaccard;
+    
     // Count of close matches
     int count_close_orth;  // orth_lev <= 5
     int count_close_phon;  // phon_lev <= 4

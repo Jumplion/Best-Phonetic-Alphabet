@@ -283,8 +283,10 @@ size_t DBWriter::batch_write_average_stats(const std::vector<WordAverageStats>& 
             avg_audio_phon_levenshtein, min_audio_phon_levenshtein,
             max_audio_phon_levenshtein, stddev_audio_phon_levenshtein,
             count_close_audio_phon,
+            avg_orth_jaccard, min_orth_jaccard, max_orth_jaccard, stddev_orth_jaccard,
+            avg_phon_jaccard, min_phon_jaccard, max_phon_jaccard, stddev_phon_jaccard,
             count_close_orth, count_close_phon
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
     )";
 
     sqlite3_stmt* stmt = nullptr;
@@ -318,8 +320,16 @@ size_t DBWriter::batch_write_average_stats(const std::vector<WordAverageStats>& 
         sqlite3_bind_double(stmt, 18, stat.max_audio_phon_levenshtein);
         sqlite3_bind_double(stmt, 19, stat.stddev_audio_phon_levenshtein);
         sqlite3_bind_int(stmt, 20, stat.count_close_audio_phon);
-        sqlite3_bind_int(stmt, 21, stat.count_close_orth);
-        sqlite3_bind_int(stmt, 22, stat.count_close_phon);
+        sqlite3_bind_double(stmt, 21, stat.avg_orth_jaccard);
+        sqlite3_bind_double(stmt, 22, stat.min_orth_jaccard);
+        sqlite3_bind_double(stmt, 23, stat.max_orth_jaccard);
+        sqlite3_bind_double(stmt, 24, stat.stddev_orth_jaccard);
+        sqlite3_bind_double(stmt, 25, stat.avg_phon_jaccard);
+        sqlite3_bind_double(stmt, 26, stat.min_phon_jaccard);
+        sqlite3_bind_double(stmt, 27, stat.max_phon_jaccard);
+        sqlite3_bind_double(stmt, 28, stat.stddev_phon_jaccard);
+        sqlite3_bind_int(stmt, 29, stat.count_close_orth);
+        sqlite3_bind_int(stmt, 30, stat.count_close_phon);
 
         rc = sqlite3_step(stmt);
         if (rc != SQLITE_DONE) {
@@ -454,6 +464,8 @@ size_t DBWriter::compute_and_write_average_stats_batched(
             long long total_lcs = 0;
             double total_weighted_phon = 0.0;
             double total_audio_phon = 0.0;
+            double total_orth_jaccard = 0.0;
+            double total_phon_jaccard = 0.0;
             int min_orth = INT_MAX;
             int max_orth = INT_MIN;
             int min_phon = INT_MAX;
@@ -462,6 +474,10 @@ size_t DBWriter::compute_and_write_average_stats_batched(
             float max_weighted_phon = std::numeric_limits<float>::lowest();
             float min_audio_phon = std::numeric_limits<float>::max();
             float max_audio_phon = std::numeric_limits<float>::lowest();
+            float min_orth_jaccard = std::numeric_limits<float>::max();
+            float max_orth_jaccard = std::numeric_limits<float>::lowest();
+            float min_phon_jaccard = std::numeric_limits<float>::max();
+            float max_phon_jaccard = std::numeric_limits<float>::lowest();
             int count_close_orth = 0;
             int count_close_phon = 0;
             int count_close_weighted_phon = 0;
@@ -472,10 +488,14 @@ size_t DBWriter::compute_and_write_average_stats_batched(
             std::vector<int> phon_distances;
             std::vector<float> weighted_phon_distances;
             std::vector<float> audio_phon_distances;
+            std::vector<float> orth_jaccard_indices;
+            std::vector<float> phon_jaccard_indices;
             orth_distances.reserve(n);
             phon_distances.reserve(n);
             weighted_phon_distances.reserve(n);
             audio_phon_distances.reserve(n);
+            orth_jaccard_indices.reserve(n);
+            phon_jaccard_indices.reserve(n);
 
             // First pass: compute means and collect distances
             for (size_t j = 0; j < n; ++j) {
@@ -492,6 +512,10 @@ size_t DBWriter::compute_and_write_average_stats_batched(
                 float weighted_phon_dist, audio_phon_dist;
                 phonetic_levenshtein_scores(phonemes_i, phonemes_j, phon_dist, weighted_phon_dist, audio_phon_dist);
                 
+                // Compute Jaccard indices
+                float orth_jaccard = orthographic_jaccard_index(word_i.word, word_j.word);
+                float phon_jaccard = phonetic_jaccard_index(phonemes_i, phonemes_j);
+                
                 // TEMPORARILY DISABLED - LCS computation commented out for performance testing
                 // auto lcs_seqs = longest_contiguous_subsequence(phonemes_i, phonemes_j);
                 // int lcs = lcs_seqs.empty() ? 0 : lcs_seqs[0].size();
@@ -502,6 +526,8 @@ size_t DBWriter::compute_and_write_average_stats_batched(
                 phon_distances.push_back(phon_dist);
                 weighted_phon_distances.push_back(weighted_phon_dist);
                 audio_phon_distances.push_back(audio_phon_dist);
+                orth_jaccard_indices.push_back(orth_jaccard);
+                phon_jaccard_indices.push_back(phon_jaccard);
 
                 // Accumulate totals
                 total_orth += orth_dist;
@@ -509,6 +535,8 @@ size_t DBWriter::compute_and_write_average_stats_batched(
                 total_lcs += lcs;  // Will accumulate -1 values (placeholder)
                 total_weighted_phon += weighted_phon_dist;
                 total_audio_phon += audio_phon_dist;
+                total_orth_jaccard += orth_jaccard;
+                total_phon_jaccard += phon_jaccard;
 
                 // Track min/max
                 min_orth = std::min(min_orth, orth_dist);
@@ -519,6 +547,10 @@ size_t DBWriter::compute_and_write_average_stats_batched(
                 max_weighted_phon = std::max(max_weighted_phon, weighted_phon_dist);
                 min_audio_phon = std::min(min_audio_phon, audio_phon_dist);
                 max_audio_phon = std::max(max_audio_phon, audio_phon_dist);
+                min_orth_jaccard = std::min(min_orth_jaccard, orth_jaccard);
+                max_orth_jaccard = std::max(max_orth_jaccard, orth_jaccard);
+                min_phon_jaccard = std::min(min_phon_jaccard, phon_jaccard);
+                max_phon_jaccard = std::max(max_phon_jaccard, phon_jaccard);
 
                 // Count close matches
                 if (orth_dist <= orth_close_threshold) {
@@ -544,26 +576,36 @@ size_t DBWriter::compute_and_write_average_stats_batched(
             double avg_phon = static_cast<double>(total_phon) / n_comparisons;
             double avg_weighted_phon = total_weighted_phon / n_comparisons;
             double avg_audio_phon = total_audio_phon / n_comparisons;
+            double avg_orth_jaccard = total_orth_jaccard / n_comparisons;
+            double avg_phon_jaccard = total_phon_jaccard / n_comparisons;
             
             // Second pass: compute standard deviations
             double sum_sq_diff_orth = 0.0;
             double sum_sq_diff_phon = 0.0;
             double sum_sq_diff_weighted_phon = 0.0;
             double sum_sq_diff_audio_phon = 0.0;
+            double sum_sq_diff_orth_jaccard = 0.0;
+            double sum_sq_diff_phon_jaccard = 0.0;
             for (size_t k = 0; k < orth_distances.size(); ++k) {
                 double diff_orth = orth_distances[k] - avg_orth;
                 double diff_phon = phon_distances[k] - avg_phon;
                 double diff_weighted_phon = weighted_phon_distances[k] - avg_weighted_phon;
                 double diff_audio_phon = audio_phon_distances[k] - avg_audio_phon;
+                double diff_orth_jaccard = orth_jaccard_indices[k] - avg_orth_jaccard;
+                double diff_phon_jaccard = phon_jaccard_indices[k] - avg_phon_jaccard;
                 sum_sq_diff_orth += diff_orth * diff_orth;
                 sum_sq_diff_phon += diff_phon * diff_phon;
                 sum_sq_diff_weighted_phon += diff_weighted_phon * diff_weighted_phon;
                 sum_sq_diff_audio_phon += diff_audio_phon * diff_audio_phon;
+                sum_sq_diff_orth_jaccard += diff_orth_jaccard * diff_orth_jaccard;
+                sum_sq_diff_phon_jaccard += diff_phon_jaccard * diff_phon_jaccard;
             }
             double stddev_orth = std::sqrt(sum_sq_diff_orth / n_comparisons);
             double stddev_phon = std::sqrt(sum_sq_diff_phon / n_comparisons);
             double stddev_weighted_phon = std::sqrt(sum_sq_diff_weighted_phon / n_comparisons);
             double stddev_audio_phon = std::sqrt(sum_sq_diff_audio_phon / n_comparisons);
+            double stddev_orth_jaccard = std::sqrt(sum_sq_diff_orth_jaccard / n_comparisons);
+            double stddev_phon_jaccard = std::sqrt(sum_sq_diff_phon_jaccard / n_comparisons);
             
             // Store results
             size_t batch_index = i - batch_start;
@@ -588,6 +630,14 @@ size_t DBWriter::compute_and_write_average_stats_batched(
             stat.max_audio_phon_levenshtein = max_audio_phon;
             stat.stddev_audio_phon_levenshtein = stddev_audio_phon;
             stat.count_close_audio_phon = count_close_audio_phon;
+            stat.avg_orth_jaccard = avg_orth_jaccard;
+            stat.min_orth_jaccard = min_orth_jaccard;
+            stat.max_orth_jaccard = max_orth_jaccard;
+            stat.stddev_orth_jaccard = stddev_orth_jaccard;
+            stat.avg_phon_jaccard = avg_phon_jaccard;
+            stat.min_phon_jaccard = min_phon_jaccard;
+            stat.max_phon_jaccard = max_phon_jaccard;
+            stat.stddev_phon_jaccard = stddev_phon_jaccard;
             stat.count_close_orth = count_close_orth;
             stat.count_close_phon = count_close_phon;
 
