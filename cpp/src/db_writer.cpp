@@ -113,6 +113,41 @@ static void report_progress(size_t global_completed, size_t total,
               << "ETA: " << eta_hours << "h " << eta_mins << "m " << eta_secs << "s    " << std::flush;
 }
 
+// ============================================================
+// Helper structures for metric accumulation
+// ============================================================
+
+// Template for accumulating statistics for any numeric type
+template<typename T>
+struct MetricAccumulator {
+    T min_val;
+    T max_val;
+    double total = 0.0;
+    std::vector<T> values;
+    
+    explicit MetricAccumulator(size_t reserve_size) {
+        min_val = std::numeric_limits<T>::max();
+        max_val = std::numeric_limits<T>::lowest();
+        values.reserve(reserve_size);
+    }
+    
+    void add(T value) {
+        min_val = std::min(min_val, value);
+        max_val = std::max(max_val, value);
+        total += static_cast<double>(value);
+        values.push_back(value);
+    }
+    
+    double compute_stddev(double average) const {
+        double sum_sq_diff = 0.0;
+        for (const T& val : values) {
+            double diff = val - average;
+            sum_sq_diff += diff * diff;
+        }
+        return std::sqrt(sum_sq_diff / values.size());
+    }
+};
+
 DBWriter::DBWriter(const std::string& db_path) : db_path_(db_path), impl_(new Impl()) {}
 
 DBWriter::~DBWriter() {
@@ -458,44 +493,20 @@ size_t DBWriter::compute_and_write_average_stats_batched(
             const Word& word_i = words[i];
             const auto& phonemes_i = all_phonemes[i];  // Use pre-parsed phonemes
 
-            // Accumulators for this word
-            long long total_orth = 0;
-            long long total_phon = 0;
+            // Initialize metric accumulators (reserve n-1 since we skip i==j)
+            const size_t n_comparisons = n - 1;
+            MetricAccumulator<int> orth_acc(n_comparisons);
+            MetricAccumulator<int> phon_acc(n_comparisons);
+            MetricAccumulator<float> weighted_phon_acc(n_comparisons);
+            MetricAccumulator<float> audio_phon_acc(n_comparisons);
+            MetricAccumulator<float> orth_jaccard_acc(n_comparisons);
+            MetricAccumulator<float> phon_jaccard_acc(n_comparisons);
+            
             long long total_lcs = 0;
-            double total_weighted_phon = 0.0;
-            double total_audio_phon = 0.0;
-            double total_orth_jaccard = 0.0;
-            double total_phon_jaccard = 0.0;
-            int min_orth = INT_MAX;
-            int max_orth = INT_MIN;
-            int min_phon = INT_MAX;
-            int max_phon = INT_MIN;
-            float min_weighted_phon = std::numeric_limits<float>::max();
-            float max_weighted_phon = std::numeric_limits<float>::lowest();
-            float min_audio_phon = std::numeric_limits<float>::max();
-            float max_audio_phon = std::numeric_limits<float>::lowest();
-            float min_orth_jaccard = std::numeric_limits<float>::max();
-            float max_orth_jaccard = std::numeric_limits<float>::lowest();
-            float min_phon_jaccard = std::numeric_limits<float>::max();
-            float max_phon_jaccard = std::numeric_limits<float>::lowest();
             int count_close_orth = 0;
             int count_close_phon = 0;
             int count_close_weighted_phon = 0;
             int count_close_audio_phon = 0;
-            
-            // Store all distances for stddev calculation
-            std::vector<int> orth_distances;
-            std::vector<int> phon_distances;
-            std::vector<float> weighted_phon_distances;
-            std::vector<float> audio_phon_distances;
-            std::vector<float> orth_jaccard_indices;
-            std::vector<float> phon_jaccard_indices;
-            orth_distances.reserve(n);
-            phon_distances.reserve(n);
-            weighted_phon_distances.reserve(n);
-            audio_phon_distances.reserve(n);
-            orth_jaccard_indices.reserve(n);
-            phon_jaccard_indices.reserve(n);
 
             // First pass: compute means and collect distances
             for (size_t j = 0; j < n; ++j) {
@@ -521,36 +532,15 @@ size_t DBWriter::compute_and_write_average_stats_batched(
                 // int lcs = lcs_seqs.empty() ? 0 : lcs_seqs[0].size();
                 int lcs = -1;  // Placeholder value while LCS is disabled
 
-                // Store for stddev calculation
-                orth_distances.push_back(orth_dist);
-                phon_distances.push_back(phon_dist);
-                weighted_phon_distances.push_back(weighted_phon_dist);
-                audio_phon_distances.push_back(audio_phon_dist);
-                orth_jaccard_indices.push_back(orth_jaccard);
-                phon_jaccard_indices.push_back(phon_jaccard);
-
-                // Accumulate totals
-                total_orth += orth_dist;
-                total_phon += phon_dist;
+                // Accumulate metrics (stores value and tracks min/max/total automatically)
+                orth_acc.add(orth_dist);
+                phon_acc.add(phon_dist);
+                weighted_phon_acc.add(weighted_phon_dist);
+                audio_phon_acc.add(audio_phon_dist);
+                orth_jaccard_acc.add(orth_jaccard);
+                phon_jaccard_acc.add(phon_jaccard);
+                
                 total_lcs += lcs;  // Will accumulate -1 values (placeholder)
-                total_weighted_phon += weighted_phon_dist;
-                total_audio_phon += audio_phon_dist;
-                total_orth_jaccard += orth_jaccard;
-                total_phon_jaccard += phon_jaccard;
-
-                // Track min/max
-                min_orth = std::min(min_orth, orth_dist);
-                max_orth = std::max(max_orth, orth_dist);
-                min_phon = std::min(min_phon, phon_dist);
-                max_phon = std::max(max_phon, phon_dist);
-                min_weighted_phon = std::min(min_weighted_phon, weighted_phon_dist);
-                max_weighted_phon = std::max(max_weighted_phon, weighted_phon_dist);
-                min_audio_phon = std::min(min_audio_phon, audio_phon_dist);
-                max_audio_phon = std::max(max_audio_phon, audio_phon_dist);
-                min_orth_jaccard = std::min(min_orth_jaccard, orth_jaccard);
-                max_orth_jaccard = std::max(max_orth_jaccard, orth_jaccard);
-                min_phon_jaccard = std::min(min_phon_jaccard, phon_jaccard);
-                max_phon_jaccard = std::max(max_phon_jaccard, phon_jaccard);
 
                 // Count close matches
                 if (orth_dist <= orth_close_threshold) {
@@ -570,76 +560,68 @@ size_t DBWriter::compute_and_write_average_stats_batched(
                 }
             }
 
-            // Compute averages
-            const int n_comparisons = n - 1;
-            double avg_orth = static_cast<double>(total_orth) / n_comparisons;
-            double avg_phon = static_cast<double>(total_phon) / n_comparisons;
-            double avg_weighted_phon = total_weighted_phon / n_comparisons;
-            double avg_audio_phon = total_audio_phon / n_comparisons;
-            double avg_orth_jaccard = total_orth_jaccard / n_comparisons;
-            double avg_phon_jaccard = total_phon_jaccard / n_comparisons;
+            // Compute averages and standard deviations
+            double avg_orth = orth_acc.total / n_comparisons;
+            double avg_phon = phon_acc.total / n_comparisons;
+            double avg_weighted_phon = weighted_phon_acc.total / n_comparisons;
+            double avg_audio_phon = audio_phon_acc.total / n_comparisons;
+            double avg_orth_jaccard = orth_jaccard_acc.total / n_comparisons;
+            double avg_phon_jaccard = phon_jaccard_acc.total / n_comparisons;
             
-            // Second pass: compute standard deviations
-            double sum_sq_diff_orth = 0.0;
-            double sum_sq_diff_phon = 0.0;
-            double sum_sq_diff_weighted_phon = 0.0;
-            double sum_sq_diff_audio_phon = 0.0;
-            double sum_sq_diff_orth_jaccard = 0.0;
-            double sum_sq_diff_phon_jaccard = 0.0;
-            for (size_t k = 0; k < orth_distances.size(); ++k) {
-                double diff_orth = orth_distances[k] - avg_orth;
-                double diff_phon = phon_distances[k] - avg_phon;
-                double diff_weighted_phon = weighted_phon_distances[k] - avg_weighted_phon;
-                double diff_audio_phon = audio_phon_distances[k] - avg_audio_phon;
-                double diff_orth_jaccard = orth_jaccard_indices[k] - avg_orth_jaccard;
-                double diff_phon_jaccard = phon_jaccard_indices[k] - avg_phon_jaccard;
-                sum_sq_diff_orth += diff_orth * diff_orth;
-                sum_sq_diff_phon += diff_phon * diff_phon;
-                sum_sq_diff_weighted_phon += diff_weighted_phon * diff_weighted_phon;
-                sum_sq_diff_audio_phon += diff_audio_phon * diff_audio_phon;
-                sum_sq_diff_orth_jaccard += diff_orth_jaccard * diff_orth_jaccard;
-                sum_sq_diff_phon_jaccard += diff_phon_jaccard * diff_phon_jaccard;
-            }
-            double stddev_orth = std::sqrt(sum_sq_diff_orth / n_comparisons);
-            double stddev_phon = std::sqrt(sum_sq_diff_phon / n_comparisons);
-            double stddev_weighted_phon = std::sqrt(sum_sq_diff_weighted_phon / n_comparisons);
-            double stddev_audio_phon = std::sqrt(sum_sq_diff_audio_phon / n_comparisons);
-            double stddev_orth_jaccard = std::sqrt(sum_sq_diff_orth_jaccard / n_comparisons);
-            double stddev_phon_jaccard = std::sqrt(sum_sq_diff_phon_jaccard / n_comparisons);
+            double stddev_orth = orth_acc.compute_stddev(avg_orth);
+            double stddev_phon = phon_acc.compute_stddev(avg_phon);
+            double stddev_weighted_phon = weighted_phon_acc.compute_stddev(avg_weighted_phon);
+            double stddev_audio_phon = audio_phon_acc.compute_stddev(avg_audio_phon);
+            double stddev_orth_jaccard = orth_jaccard_acc.compute_stddev(avg_orth_jaccard);
+            double stddev_phon_jaccard = phon_jaccard_acc.compute_stddev(avg_phon_jaccard);
             
             // Store results
             size_t batch_index = i - batch_start;
             WordAverageStats& stat = batch_stats[batch_index];
             stat.word_id = word_i.id;
+            
+            // Orthographic Levenshtein
             stat.avg_orth_levenshtein = avg_orth;
-            stat.avg_phon_levenshtein = avg_phon;
-            stat.avg_lcs_length = static_cast<double>(total_lcs) / n_comparisons;
-            stat.min_orth_levenshtein = min_orth;
-            stat.max_orth_levenshtein = max_orth;
+            stat.min_orth_levenshtein = orth_acc.min_val;
+            stat.max_orth_levenshtein = orth_acc.max_val;
             stat.stddev_orth_levenshtein = stddev_orth;
-            stat.min_phon_levenshtein = min_phon;
-            stat.max_phon_levenshtein = max_phon;
+            stat.count_close_orth = count_close_orth;
+            
+            // Phonetic Levenshtein
+            stat.avg_phon_levenshtein = avg_phon;
+            stat.min_phon_levenshtein = phon_acc.min_val;
+            stat.max_phon_levenshtein = phon_acc.max_val;
             stat.stddev_phon_levenshtein = stddev_phon;
+            stat.count_close_phon = count_close_phon;
+            
+            // Weighted Phonetic Levenshtein
             stat.avg_weighted_phon_levenshtein = avg_weighted_phon;
-            stat.min_weighted_phon_levenshtein = min_weighted_phon;
-            stat.max_weighted_phon_levenshtein = max_weighted_phon;
+            stat.min_weighted_phon_levenshtein = weighted_phon_acc.min_val;
+            stat.max_weighted_phon_levenshtein = weighted_phon_acc.max_val;
             stat.stddev_weighted_phon_levenshtein = stddev_weighted_phon;
             stat.count_close_weighted_phon = count_close_weighted_phon;
+            
+            // Audio Phonetic Levenshtein
             stat.avg_audio_phon_levenshtein = avg_audio_phon;
-            stat.min_audio_phon_levenshtein = min_audio_phon;
-            stat.max_audio_phon_levenshtein = max_audio_phon;
+            stat.min_audio_phon_levenshtein = audio_phon_acc.min_val;
+            stat.max_audio_phon_levenshtein = audio_phon_acc.max_val;
             stat.stddev_audio_phon_levenshtein = stddev_audio_phon;
             stat.count_close_audio_phon = count_close_audio_phon;
+            
+            // Orthographic Jaccard
             stat.avg_orth_jaccard = avg_orth_jaccard;
-            stat.min_orth_jaccard = min_orth_jaccard;
-            stat.max_orth_jaccard = max_orth_jaccard;
+            stat.min_orth_jaccard = orth_jaccard_acc.min_val;
+            stat.max_orth_jaccard = orth_jaccard_acc.max_val;
             stat.stddev_orth_jaccard = stddev_orth_jaccard;
+            
+            // Phonetic Jaccard
             stat.avg_phon_jaccard = avg_phon_jaccard;
-            stat.min_phon_jaccard = min_phon_jaccard;
-            stat.max_phon_jaccard = max_phon_jaccard;
+            stat.min_phon_jaccard = phon_jaccard_acc.min_val;
+            stat.max_phon_jaccard = phon_jaccard_acc.max_val;
             stat.stddev_phon_jaccard = stddev_phon_jaccard;
-            stat.count_close_orth = count_close_orth;
-            stat.count_close_phon = count_close_phon;
+            
+            // LCS (placeholder)
+            stat.avg_lcs_length = static_cast<double>(total_lcs) / n_comparisons;
 
             // Progress reporting
             size_t current_completed = ++completed_in_batch;
@@ -681,208 +663,4 @@ size_t DBWriter::compute_and_write_average_stats_batched(
     std::cout << "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
     
     return total_written;
-}
-
-size_t DBWriter::batch_update_metric_stats(
-    const std::vector<WordMetricStats>& stats,
-    const std::string& column_prefix
-) {
-    if (!impl_ || !impl_->db) {
-        std::cerr << "DBWriter not initialized. Call init() first.\n";
-        return 0;
-    }
-
-    if (stats.empty()) {
-        return 0;
-    }
-
-    // Begin transaction for batch update
-    if (!begin_transaction(impl_->db)) {
-        return 0;
-    }
-
-    // Prepare UPDATE statement - updates existing rows based on word_id
-    std::string sql = 
-        "UPDATE average_stats SET "
-        "avg_" + column_prefix + " = ?, "
-        "min_" + column_prefix + " = ?, "
-        "max_" + column_prefix + " = ?, "
-        "stddev_" + column_prefix + " = ?, "
-        "count_close_" + column_prefix + " = ? "
-        "WHERE word_id = ?;";
-
-    sqlite3_stmt* stmt = nullptr;
-    int rc = sqlite3_prepare_v2(impl_->db, sql.c_str(), -1, &stmt, nullptr);
-    if (rc != SQLITE_OK) {
-        std::cerr << "Failed to prepare update statement: " << sqlite3_errmsg(impl_->db) << std::endl;
-        sqlite3_exec(impl_->db, "ROLLBACK;", nullptr, nullptr, nullptr);
-        return 0;
-    }
-
-    size_t updated = 0;
-    for (const auto& stat : stats) {
-        // Bind parameters
-        sqlite3_bind_double(stmt, 1, stat.avg_value);
-        sqlite3_bind_double(stmt, 2, stat.min_value);
-        sqlite3_bind_double(stmt, 3, stat.max_value);
-        sqlite3_bind_double(stmt, 4, stat.stddev_value);
-        sqlite3_bind_int(stmt, 5, stat.count_close);
-        sqlite3_bind_int(stmt, 6, stat.word_id);
-
-        rc = sqlite3_step(stmt);
-        if (rc != SQLITE_DONE) {
-            std::cerr << "Failed to update stats row for word_id " << stat.word_id 
-                      << ": " << sqlite3_errmsg(impl_->db) << std::endl;
-        } else {
-            updated++;
-        }
-
-        sqlite3_reset(stmt);
-    }
-
-    sqlite3_finalize(stmt);
-
-    // Commit transaction
-    if (!commit_transaction(impl_->db)) {
-        return 0;
-    }
-
-    return updated;
-}
-
-size_t DBWriter::compute_and_update_metric_batched(
-    const std::vector<Word>& words,
-    const std::string& column_prefix,
-    float (*score_function)(const std::vector<std::string>&, const std::vector<std::string>&),
-    size_t batch_size,
-    float close_threshold
-) {
-    const size_t n = words.size();
-    if (n == 0) {
-        std::cout << "No words to process.\n";
-        return 0;
-    }
-
-    std::cout << "Computing and updating metric '" << column_prefix << "' in batches...\n";
-    std::cout << "Total words: " << n << " | Batch size: " << batch_size << "\n";
-    std::cout << "Close threshold: " << close_threshold << "\n\n";
-
-    // Pre-parse phonemes once for all words
-    std::vector<std::vector<std::string>> all_phonemes = preparse_phonemes(words);
-
-    auto overall_start = std::chrono::high_resolution_clock::now();
-    size_t total_updated = 0;
-    
-    // Process in batches
-    for (size_t batch_start = 0; batch_start < n; batch_start += batch_size) {
-        size_t batch_end = std::min(batch_start + batch_size, n);
-        size_t current_batch_size = batch_end - batch_start;
-        
-        std::cout << "\n--- Batch: words " << batch_start << " to " << (batch_end - 1) 
-                  << " (" << current_batch_size << " words) ---\n";
-        
-        // Compute stats for this batch
-        std::vector<WordMetricStats> batch_stats(current_batch_size);
-        
-        auto batch_compute_start = std::chrono::high_resolution_clock::now();
-        std::atomic<size_t> completed_in_batch(0);
-
-        #pragma omp parallel for schedule(dynamic, 10)
-        for (size_t i = batch_start; i < batch_end; ++i) {
-            const Word& word_i = words[i];
-            const auto& phonemes_i = all_phonemes[i];  // Use pre-parsed phonemes
-
-            // Accumulators for this word
-            double total_score = 0.0;
-            float min_score = std::numeric_limits<float>::max();
-            float max_score = std::numeric_limits<float>::lowest();
-            int count_close = 0;
-            
-            // Store all scores for stddev calculation
-            std::vector<float> scores;
-            scores.reserve(n);
-
-            // Compute scores against all other words
-            for (size_t j = 0; j < n; ++j) {
-                if (i == j) continue;
-
-                const Word& word_j = words[j];
-                const auto& phonemes_j = all_phonemes[j];  // Use pre-parsed phonemes
-
-                // Compute the metric score
-                float score = score_function(phonemes_i, phonemes_j);
-                
-                scores.push_back(score);
-                total_score += score;
-                
-                min_score = std::min(min_score, score);
-                max_score = std::max(max_score, score);
-                
-                if (score <= close_threshold) {
-                    count_close++;
-                }
-            }
-
-            // Compute average
-            const int n_comparisons = n - 1;
-            double avg_score = total_score / n_comparisons;
-            
-            // Compute standard deviation
-            double sum_sq_diff = 0.0;
-            for (float score : scores) {
-                double diff = score - avg_score;
-                sum_sq_diff += diff * diff;
-            }
-            double stddev = std::sqrt(sum_sq_diff / n_comparisons);
-            
-            // Store results
-            size_t batch_index = i - batch_start;
-            WordMetricStats& stat = batch_stats[batch_index];
-            stat.word_id = word_i.id;
-            stat.avg_value = avg_score;
-            stat.min_value = min_score;
-            stat.max_value = max_score;
-            stat.stddev_value = stddev;
-            stat.count_close = count_close;
-
-            // Progress reporting
-            size_t current_completed = ++completed_in_batch;
-            size_t global_completed = batch_start + current_completed;
-            
-            #pragma omp critical
-            {
-                report_progress(global_completed, n, overall_start);
-            }
-        }
-
-        auto batch_compute_end = std::chrono::high_resolution_clock::now();
-        auto compute_ms = std::chrono::duration_cast<std::chrono::milliseconds>(batch_compute_end - batch_compute_start).count();
-        
-        std::cout << "\n  Batch computation took " << (compute_ms / 1000.0) << " seconds\n";
-
-        // Update batch in database
-        std::cout << "  Updating batch in database...\n";
-        auto write_start = std::chrono::high_resolution_clock::now();
-        size_t updated = batch_update_metric_stats(batch_stats, column_prefix);
-        auto write_end = std::chrono::high_resolution_clock::now();
-        auto write_ms = std::chrono::duration_cast<std::chrono::milliseconds>(write_end - write_start).count();
-        
-        std::cout << "  ✅ Updated " << updated << " rows in " << write_ms << " ms\n";
-        total_updated += updated;
-    }
-
-    auto overall_end = std::chrono::high_resolution_clock::now();
-    auto total_seconds = std::chrono::duration_cast<std::chrono::seconds>(overall_end - overall_start).count();
-    int hours = total_seconds / 3600;
-    int mins = (total_seconds % 3600) / 60;
-    int secs = total_seconds % 60;
-    
-    std::cout << "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
-    std::cout << "✅ Completed metric computation for '" << column_prefix << "'!\n";
-    std::cout << "   Total words processed: " << n << "\n";
-    std::cout << "   Total rows updated: " << total_updated << "\n";
-    std::cout << "   Total time: " << hours << "h " << mins << "m " << secs << "s\n";
-    std::cout << "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
-    
-    return total_updated;
 }
