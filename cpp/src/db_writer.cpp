@@ -137,16 +137,18 @@ struct MetricAccumulator {
         total += static_cast<double>(value);
         values.push_back(value);
     }
-    
-    double compute_stddev(double average) const {
-        double sum_sq_diff = 0.0;
-        for (const T& val : values) {
-            double diff = val - average;
-            sum_sq_diff += diff * diff;
-        }
-        return std::sqrt(sum_sq_diff / values.size());
-    }
 };
+
+// Helper function to assign 4-value metrics (avg, min, max, stddev) from accumulator
+// MinMaxType allows for type conversion (e.g., float accumulator -> double struct fields)
+template<typename AccumType, typename MinMaxType>
+void assign_metric_stats(double& avg, MinMaxType& min, MinMaxType& max, double& stddev, 
+                        const MetricAccumulator<AccumType>& acc, double pre_computed_avg, double pre_computed_stddev) {
+    avg = pre_computed_avg;
+    min = static_cast<MinMaxType>(acc.min_val);
+    max = static_cast<MinMaxType>(acc.max_val);
+    stddev = pre_computed_stddev;
+}
 
 DBWriter::DBWriter(const std::string& db_path) : db_path_(db_path), impl_(new Impl()) {}
 
@@ -559,8 +561,8 @@ size_t DBWriter::compute_and_write_average_stats_batched(
                     count_close_audio_phon++;
                 }
             }
-
-            // Compute averages and standard deviations
+ 
+            // Compute averages
             double avg_orth = orth_acc.total / n_comparisons;
             double avg_phon = phon_acc.total / n_comparisons;
             double avg_weighted_phon = weighted_phon_acc.total / n_comparisons;
@@ -568,57 +570,72 @@ size_t DBWriter::compute_and_write_average_stats_batched(
             double avg_orth_jaccard = orth_jaccard_acc.total / n_comparisons;
             double avg_phon_jaccard = phon_jaccard_acc.total / n_comparisons;
             
-            double stddev_orth = orth_acc.compute_stddev(avg_orth);
-            double stddev_phon = phon_acc.compute_stddev(avg_phon);
-            double stddev_weighted_phon = weighted_phon_acc.compute_stddev(avg_weighted_phon);
-            double stddev_audio_phon = audio_phon_acc.compute_stddev(avg_audio_phon);
-            double stddev_orth_jaccard = orth_jaccard_acc.compute_stddev(avg_orth_jaccard);
-            double stddev_phon_jaccard = phon_jaccard_acc.compute_stddev(avg_phon_jaccard);
+            // Compute all standard deviations in a single pass for better cache efficiency
+            double sum_sq_diff_orth = 0.0;
+            double sum_sq_diff_phon = 0.0;
+            double sum_sq_diff_weighted_phon = 0.0;
+            double sum_sq_diff_audio_phon = 0.0;
+            double sum_sq_diff_orth_jaccard = 0.0;
+            double sum_sq_diff_phon_jaccard = 0.0;
             
-            // Store results
+            for (size_t k = 0; k < n_comparisons; ++k) {
+                double diff_orth = orth_acc.values[k] - avg_orth;
+                double diff_phon = phon_acc.values[k] - avg_phon;
+                double diff_weighted_phon = weighted_phon_acc.values[k] - avg_weighted_phon;
+                double diff_audio_phon = audio_phon_acc.values[k] - avg_audio_phon;
+                double diff_orth_jaccard = orth_jaccard_acc.values[k] - avg_orth_jaccard;
+                double diff_phon_jaccard = phon_jaccard_acc.values[k] - avg_phon_jaccard;
+                
+                sum_sq_diff_orth += diff_orth * diff_orth;
+                sum_sq_diff_phon += diff_phon * diff_phon;
+                sum_sq_diff_weighted_phon += diff_weighted_phon * diff_weighted_phon;
+                sum_sq_diff_audio_phon += diff_audio_phon * diff_audio_phon;
+                sum_sq_diff_orth_jaccard += diff_orth_jaccard * diff_orth_jaccard;
+                sum_sq_diff_phon_jaccard += diff_phon_jaccard * diff_phon_jaccard;
+            }
+            
+            double stddev_orth = std::sqrt(sum_sq_diff_orth / n_comparisons);
+            double stddev_phon = std::sqrt(sum_sq_diff_phon / n_comparisons);
+            double stddev_weighted_phon = std::sqrt(sum_sq_diff_weighted_phon / n_comparisons);
+            double stddev_audio_phon = std::sqrt(sum_sq_diff_audio_phon / n_comparisons);
+            double stddev_orth_jaccard = std::sqrt(sum_sq_diff_orth_jaccard / n_comparisons);
+            double stddev_phon_jaccard = std::sqrt(sum_sq_diff_phon_jaccard / n_comparisons);
+
+            // Store results using helper function to reduce repetition
             size_t batch_index = i - batch_start;
             WordAverageStats& stat = batch_stats[batch_index];
             stat.word_id = word_i.id;
             
-            // Orthographic Levenshtein
-            stat.avg_orth_levenshtein = avg_orth;
-            stat.min_orth_levenshtein = orth_acc.min_val;
-            stat.max_orth_levenshtein = orth_acc.max_val;
-            stat.stddev_orth_levenshtein = stddev_orth;
+            // Assign all 4-value metrics (avg, min, max, stddev) using helper
+            assign_metric_stats(stat.avg_orth_levenshtein, stat.min_orth_levenshtein, 
+                              stat.max_orth_levenshtein, stat.stddev_orth_levenshtein, 
+                              orth_acc, avg_orth, stddev_orth);
+            
+            assign_metric_stats(stat.avg_phon_levenshtein, stat.min_phon_levenshtein, 
+                              stat.max_phon_levenshtein, stat.stddev_phon_levenshtein, 
+                              phon_acc, avg_phon, stddev_phon);
+            
+            assign_metric_stats(stat.avg_weighted_phon_levenshtein, stat.min_weighted_phon_levenshtein, 
+                              stat.max_weighted_phon_levenshtein, stat.stddev_weighted_phon_levenshtein, 
+                              weighted_phon_acc, avg_weighted_phon, stddev_weighted_phon);
+            
+            assign_metric_stats(stat.avg_audio_phon_levenshtein, stat.min_audio_phon_levenshtein, 
+                              stat.max_audio_phon_levenshtein, stat.stddev_audio_phon_levenshtein, 
+                              audio_phon_acc, avg_audio_phon, stddev_audio_phon);
+            
+            assign_metric_stats(stat.avg_orth_jaccard, stat.min_orth_jaccard, 
+                              stat.max_orth_jaccard, stat.stddev_orth_jaccard, 
+                              orth_jaccard_acc, avg_orth_jaccard, stddev_orth_jaccard);
+            
+            assign_metric_stats(stat.avg_phon_jaccard, stat.min_phon_jaccard, 
+                              stat.max_phon_jaccard, stat.stddev_phon_jaccard, 
+                              phon_jaccard_acc, avg_phon_jaccard, stddev_phon_jaccard);
+            
+            // Assign close match counts
             stat.count_close_orth = count_close_orth;
-            
-            // Phonetic Levenshtein
-            stat.avg_phon_levenshtein = avg_phon;
-            stat.min_phon_levenshtein = phon_acc.min_val;
-            stat.max_phon_levenshtein = phon_acc.max_val;
-            stat.stddev_phon_levenshtein = stddev_phon;
             stat.count_close_phon = count_close_phon;
-            
-            // Weighted Phonetic Levenshtein
-            stat.avg_weighted_phon_levenshtein = avg_weighted_phon;
-            stat.min_weighted_phon_levenshtein = weighted_phon_acc.min_val;
-            stat.max_weighted_phon_levenshtein = weighted_phon_acc.max_val;
-            stat.stddev_weighted_phon_levenshtein = stddev_weighted_phon;
             stat.count_close_weighted_phon = count_close_weighted_phon;
-            
-            // Audio Phonetic Levenshtein
-            stat.avg_audio_phon_levenshtein = avg_audio_phon;
-            stat.min_audio_phon_levenshtein = audio_phon_acc.min_val;
-            stat.max_audio_phon_levenshtein = audio_phon_acc.max_val;
-            stat.stddev_audio_phon_levenshtein = stddev_audio_phon;
             stat.count_close_audio_phon = count_close_audio_phon;
-            
-            // Orthographic Jaccard
-            stat.avg_orth_jaccard = avg_orth_jaccard;
-            stat.min_orth_jaccard = orth_jaccard_acc.min_val;
-            stat.max_orth_jaccard = orth_jaccard_acc.max_val;
-            stat.stddev_orth_jaccard = stddev_orth_jaccard;
-            
-            // Phonetic Jaccard
-            stat.avg_phon_jaccard = avg_phon_jaccard;
-            stat.min_phon_jaccard = phon_jaccard_acc.min_val;
-            stat.max_phon_jaccard = phon_jaccard_acc.max_val;
-            stat.stddev_phon_jaccard = stddev_phon_jaccard;
             
             // LCS (placeholder)
             stat.avg_lcs_length = static_cast<double>(total_lcs) / n_comparisons;
