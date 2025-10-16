@@ -84,6 +84,12 @@ int main(int argc, char** argv) {
     size_t report_interval = std::max(size_t(10000), total_pairs / 100); // Report every 1% or 10000 pairs
     std::mutex progress_mutex;
 
+    // Performance timing diagnostics (thread-safe accumulators)
+    std::atomic<int64_t> total_orth_lev_ns{0};
+    std::atomic<int64_t> total_phon_lev_ns{0};
+    std::atomic<int64_t> total_lcs_ns{0};
+    std::atomic<size_t> timing_sample_count{0};
+
     // Parallel computation of all pairs
     // We use a single parallelized loop over a flat index, then map to (i,j) pairs
     #pragma omp parallel for schedule(dynamic, 1000)
@@ -115,25 +121,43 @@ int main(int argc, char** argv) {
         score.word_id_1 = word_a.id;
         score.word_id_2 = word_b.id;
 
-        // 1. Orthographic Levenshtein distance
+        // 1. Orthographic Levenshtein distance (with timing)
+        auto t1_start = std::chrono::high_resolution_clock::now();
         score.orth_levenshtein = orthographic_levenshtein_score(word_a.word, word_b.word);
+        auto t1_end = std::chrono::high_resolution_clock::now();
+        
+        // 2. Phonetic Levenshtein distance (with timing)
+        auto t2_start = std::chrono::high_resolution_clock::now();
+        phonetic_levenshtein_scores(phonemes_a, phonemes_b, score.phon_levenshtein, score.weighted_phon_levenshtein, score.audio_phon_levenshtein);
+        auto t2_end = std::chrono::high_resolution_clock::now();
 
-        // 2. Phonetic Levenshtein distance
-        score.phon_levenshtein = phonetic_levenshtein_score(phonemes_a, phonemes_b);
-
-        // 3. Longest contiguous subsequence (orthographic)
-        auto lcs_results = longest_contiguous_subsequence(word_a.word, word_b.word);
-        if (!lcs_results.empty() && !lcs_results[0].empty()) {
-            score.lcs_length = lcs_results[0].size();
-            // Concatenate the first LCS result for storage
-            score.lcs_text = "";
-            for (const auto& s : lcs_results[0]) {
-                score.lcs_text += s;
-            }
-        } else {
-            score.lcs_length = 0;
-            score.lcs_text = "";
-        }
+        // 3. Longest contiguous subsequence (orthographic) (with timing)
+        // TEMPORARILY DISABLED - LCS computation commented out for performance testing
+        auto t3_start = std::chrono::high_resolution_clock::now();
+        // auto lcs_results = longest_contiguous_subsequence(word_a.word, word_b.word);
+        auto t3_end = std::chrono::high_resolution_clock::now();
+        
+        // Accumulate timing data (atomic adds avoid mutex overhead)
+        total_orth_lev_ns.fetch_add(std::chrono::duration_cast<std::chrono::nanoseconds>(t1_end - t1_start).count());
+        total_phon_lev_ns.fetch_add(std::chrono::duration_cast<std::chrono::nanoseconds>(t2_end - t2_start).count());
+        total_lcs_ns.fetch_add(std::chrono::duration_cast<std::chrono::nanoseconds>(t3_end - t3_start).count());
+        timing_sample_count.fetch_add(1);
+        
+        // Use placeholder value (-1) for LCS while disabled
+        score.lcs_length = -1;
+        score.lcs_text = "";
+        
+        // if (!lcs_results.empty() && !lcs_results[0].empty()) {
+        //     score.lcs_length = lcs_results[0].size();
+        //     // Concatenate the first LCS result for storage
+        //     score.lcs_text = "";
+        //     for (const auto& s : lcs_results[0]) {
+        //         score.lcs_text += s;
+        //     }
+        // } else {
+        //     score.lcs_length = 0;
+        //     score.lcs_text = "";
+        // }
 
         // IDs are already set (word_id_1, word_id_2) - no need for text fields
 
@@ -203,6 +227,30 @@ int main(int argc, char** argv) {
         std::cout << " (avg " << avg_speed << " pairs/s)";
     }
     std::cout << ".\n";
+
+    // Print performance diagnostics
+    size_t samples = timing_sample_count.load();
+    if (samples > 0) {
+        std::cout << "\n---- Performance Diagnostics (averaged over " << samples << " pairs):\n";
+        std::cout << "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
+        
+        double avg_orth_lev_us = total_orth_lev_ns.load() / (1000.0 * samples);
+        double avg_phon_lev_us = total_phon_lev_ns.load() / (1000.0 * samples);
+        double avg_lcs_us = total_lcs_ns.load() / (1000.0 * samples);
+        double total_avg_us = avg_orth_lev_us + avg_phon_lev_us + avg_lcs_us;
+        
+        std::cout << std::fixed << std::setprecision(3);
+        std::cout << "  Orthographic Levenshtein: " << std::setw(8) << avg_orth_lev_us << " μs/pair  ("
+                  << std::setw(5) << std::setprecision(1) << (100.0 * avg_orth_lev_us / total_avg_us) << "%)\n";
+        std::cout << "  Phonetic Levenshtein:     " << std::setw(8) << std::setprecision(3) << avg_phon_lev_us << " μs/pair  ("
+                  << std::setw(5) << std::setprecision(1) << (100.0 * avg_phon_lev_us / total_avg_us) << "%)\n";
+        std::cout << "  Longest Common Subseq:    " << std::setw(8) << std::setprecision(3) << avg_lcs_us << " μs/pair  ("
+                  << std::setw(5) << std::setprecision(1) << (100.0 * avg_lcs_us / total_avg_us) << "%)\n";
+        std::cout << "  ─────────────────────────────────────────────────\n";
+        std::cout << "  Total per pair:           " << std::setw(8) << total_avg_us << " μs/pair\n";
+        std::cout << "  Theoretical max rate:     " << std::setw(8) << std::setprecision(0) << (1000000.0 / total_avg_us) << " pairs/s (single-threaded)\n";
+        std::cout << "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
+    }
 
     return 0;
 }

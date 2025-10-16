@@ -443,6 +443,7 @@ size_t DBWriter::compute_and_write_average_stats_batched(
         std::atomic<size_t> completed_in_batch(0);
 
         #pragma omp parallel for schedule(dynamic, 10)
+        // Outerloop: parallelized over words in the current batch
         for (size_t i = batch_start; i < batch_end; ++i) {
             const Word& word_i = words[i];
             const auto& phonemes_i = all_phonemes[i];  // Use pre-parsed phonemes
@@ -485,14 +486,16 @@ size_t DBWriter::compute_and_write_average_stats_batched(
 
                 // Compute distances
                 int orth_dist = orthographic_levenshtein_score(word_i.word, word_j.word);
-                int phon_dist = phonetic_levenshtein_score(phonemes_i, phonemes_j);
-                
+
                 // Compute both weighted and audio distances in a single pass (2x faster!)
+                int phon_dist;
                 float weighted_phon_dist, audio_phon_dist;
-                combined_phonetic_levenshtein_scores(phonemes_i, phonemes_j, weighted_phon_dist, audio_phon_dist);
+                phonetic_levenshtein_scores(phonemes_i, phonemes_j, phon_dist, weighted_phon_dist, audio_phon_dist);
                 
-                auto lcs_seqs = longest_contiguous_subsequence(phonemes_i, phonemes_j);
-                int lcs = lcs_seqs.empty() ? 0 : lcs_seqs[0].size();
+                // TEMPORARILY DISABLED - LCS computation commented out for performance testing
+                // auto lcs_seqs = longest_contiguous_subsequence(phonemes_i, phonemes_j);
+                // int lcs = lcs_seqs.empty() ? 0 : lcs_seqs[0].size();
+                int lcs = -1;  // Placeholder value while LCS is disabled
 
                 // Store for stddev calculation
                 orth_distances.push_back(orth_dist);
@@ -503,7 +506,7 @@ size_t DBWriter::compute_and_write_average_stats_batched(
                 // Accumulate totals
                 total_orth += orth_dist;
                 total_phon += phon_dist;
-                total_lcs += lcs;
+                total_lcs += lcs;  // Will accumulate -1 values (placeholder)
                 total_weighted_phon += weighted_phon_dist;
                 total_audio_phon += audio_phon_dist;
 
@@ -524,6 +527,7 @@ size_t DBWriter::compute_and_write_average_stats_batched(
                 if (phon_dist <= phon_close_threshold) {
                     count_close_phon++;
                 }
+                
                 // Use a reasonable threshold for weighted/audio distances (e.g., 30% of max phoneme count)
                 float dynamic_threshold = static_cast<float>(std::max(phonemes_i.size(), phonemes_j.size())) * 0.3f;
                 if (weighted_phon_dist <= dynamic_threshold) {

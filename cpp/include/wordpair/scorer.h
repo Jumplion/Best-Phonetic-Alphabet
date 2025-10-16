@@ -21,21 +21,6 @@
 int orthographic_levenshtein_score(const std::string& a, const std::string& b);
 
 /**
- * Compute a phonetic similarity score between two sequences of phonemes using the Levenshtein edit distance.
- *
- * The score is defined as the minimum number of single-phoneme edits (insertions, deletions, or substitutions)
- * required to change one phoneme sequence into the other.
- *
- * @param a First input vector of phonemes (strings).
- * @param b Second input vector of phonemes (strings).
- * @return Integer Levenshtein distance between the two phoneme sequences.
- *
- * @note 
- * - The function operates on vectors of strings representing phonemes.
- */
-int phonetic_levenshtein_score(const std::vector<std::string>& a, const std::vector<std::string>& b);
-
-/**
  * Compute both weighted and audio-based phonetic Levenshtein scores simultaneously.
  * 
  * This function computes two phonetic similarity metrics in a single pass:
@@ -65,11 +50,12 @@ int phonetic_levenshtein_score(const std::vector<std::string>& a, const std::vec
  * combined_phonetic_levenshtein_scores(word1, word2, weighted_dist, audio_dist);
  * ```
  */
-void combined_phonetic_levenshtein_scores(
+void phonetic_levenshtein_scores(
     const std::vector<std::string>& a, 
     const std::vector<std::string>& b,
-    float& out_weighted_score,
-    float& out_audio_score
+    int& out_unweighted_score,
+    float& out_feature_weighted_score,
+    float& out_audio_weighted_score
 );
 
 /**

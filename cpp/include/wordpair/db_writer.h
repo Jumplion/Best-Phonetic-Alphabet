@@ -24,6 +24,9 @@ struct WordPairScore {
     // Basic distance metrics
     int orth_levenshtein;
     int phon_levenshtein;
+
+    float weighted_phon_levenshtein; // Feature-based phoneme distances
+    float audio_phon_levenshtein;    // Audio-based phoneme distances
     
     // Longest contiguous subsequence (we'll store the length)
     int lcs_length;
